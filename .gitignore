@@ -1,3 +1,15 @@
+log_slurm/
+logs/
+log_archived/
+OTHERS/
+tmp/
+src/archived/
+src/ucvme/
+data/
+
+.declare_api_key.sh
+analysis-and-visualisation.ipynb
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

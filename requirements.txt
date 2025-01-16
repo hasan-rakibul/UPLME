@@ -1,0 +1,32 @@
+# python 3.12.3
+transformers >= 4.43.0
+datasets
+lightning
+tensorboard
+torch-tb-profiler # for tensorboard profiling
+pandas
+matplotlib
+scienceplots
+omegaconf
+ipykernel # for jupyter notebook
+scipy
+scikit-learn
+
+# LLM labelling
+# groq
+# tenacity 
+
+# if try for Optuna hyperparameter optimisation
+#optuna
+#optuna-integration[pytorch-lightning]
+#plotly # for visualisation
+#kaleido # for visualisation
+
+## LoRA
+# sentencepiece
+# peft
+# evaluate
+
+## agentic workflow
+# crewai
+# langchain-huggingface

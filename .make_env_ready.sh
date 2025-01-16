@@ -1,0 +1,9 @@
+#!/bin/bash
+
+read -p "Enter the GPU ID(s) to use: " GPU_ID
+export CUDA_VISIBLE_DEVICES=$GPU_ID
+echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES is set."
+
+export TOKENIZERS_PARALLELISM=false
+echo "TOKENIZERS_PARALLELISM=$TOKENIZERS_PARALLELISM is set."
+
