@@ -8,13 +8,16 @@ import glob
 import torch
 
 from utils import log_info, resolve_logging_dir, process_seedwise_metrics, prepare_train_config, get_trainer, resolve_num_steps
-from model import init_model, load_model_from_ckpt
+from model import LightningPLM, ProbabilisticPLM
 from preprocess import DataModuleFromRaw
 from test import test_plm
 
 logger = logging.getLogger(__name__)
 
-def _train_validate_plm(config: OmegaConf, train_dl: torch.utils.data.DataLoader = None, delta: float = 0.5, seed: int = 0, lr: float = 1e-5) -> tuple:
+def _train_validate_plm(
+        config: OmegaConf, train_dl: torch.utils.data.DataLoader, 
+        delta: float, seed: int, lr: float, remove_noise: bool, debug: bool
+    ) -> tuple:
     datamodule = DataModuleFromRaw(config, delta=delta, seed=seed)
     # if os.path.exists(config.logging_dir):
     #     log_info(logger, f"Seed-level logging directory already exists: {config.logging_dir}. So, validating on the saved ckpt...")
@@ -26,7 +29,7 @@ def _train_validate_plm(config: OmegaConf, train_dl: torch.utils.data.DataLoader
     
     val_dl = datamodule.get_val_dl(data_path_list=config.val_file_list)
 
-    trainer = get_trainer(config, enable_early_stopping=config.enable_early_stopping)
+    trainer = get_trainer(config, enable_early_stopping=config.enable_early_stopping, debug=debug)
 
     if config.lr_scheduler_type == "linear" or config.lr_scheduler_type == "polynomial":
         config.num_training_steps, config.num_warmup_steps = resolve_num_steps(config, train_dl)
@@ -37,7 +40,16 @@ def _train_validate_plm(config: OmegaConf, train_dl: torch.utils.data.DataLoader
     if not os.path.exists(config.logging_dir):
         with trainer.init_module():
             # model created here directly goes to GPU
-            model = init_model(config, lr=lr) 
+            if remove_noise:
+                model = ProbabilisticPLM(
+                    plm_name=config.plm,
+                    lr=lr,
+                    num_training_steps=config.num_training_steps,
+                    num_warmup_steps=config.num_warmup_steps
+                )
+            else:
+                model = LightningPLM(config, lr=lr)
+        
         trainer.fit(
             model=model,
             train_dataloaders=train_dl,
@@ -55,7 +67,10 @@ def _train_validate_plm(config: OmegaConf, train_dl: torch.utils.data.DataLoader
     # final validation at the end of training
     log_info(logger, f"Loading the best model from {best_model_ckpt}")
     with trainer.init_module(empty_init=True):
-        model = load_model_from_ckpt(config, best_model_ckpt)
+        if remove_noise:
+            model = ProbabilisticPLM.load_from_checkpoint(best_model_ckpt)
+        else:
+            model = LightningPLM.load_from_checkpoint(best_model_ckpt, config=config)
 
     # model.config.save_predictions_to_disk = True # save final predictions to disk
     trainer.validate(model=model, dataloaders=val_dl)
@@ -68,7 +83,13 @@ def _train_validate_plm(config: OmegaConf, train_dl: torch.utils.data.DataLoader
 
     return best_model_ckpt, metrics
 
-def _seeds_sweep(config: OmegaConf, do_test: bool = False, train_dl: torch.utils.data.DataLoader = None, delta: float = 0.5, lr: float = 1e-5) -> None:
+def _seeds_sweep(
+        config: OmegaConf, do_test: bool,
+        train_dl: torch.utils.data.DataLoader, 
+        delta: float, lr: float, test_have_label: bool,
+        remove_noise: bool, debug: bool
+    ) -> None:
+
     parent_logging_dir = config.logging_dir
     results = []
     for seed in config.seeds:
@@ -78,14 +99,15 @@ def _seeds_sweep(config: OmegaConf, do_test: bool = False, train_dl: torch.utils
 
         L.seed_everything(config.seed)
 
-        best_model_ckpt, metrics = _train_validate_plm(config, train_dl=train_dl, delta=delta, seed=seed, lr=lr)
+        best_model_ckpt, metrics = _train_validate_plm(config, train_dl=train_dl, delta=delta, seed=seed, lr=lr,
+                                                       remove_noise=remove_noise, debug=debug)
         
         if do_test:
             # subsequent testing
             log_info(logger, f"Testing right after training from {best_model_ckpt}")
             config.test_from_checkpoint = best_model_ckpt
             config.logging_dir = resolve_logging_dir(config)
-            test_metrics = test_plm(config)
+            test_metrics = test_plm(config, have_label=test_have_label, delta=delta, seed=seed, remove_noise=remove_noise)
             metrics = {**metrics, **test_metrics} # merge the two dictionaries 
 
         metrics["seed"] = seed
@@ -126,23 +148,23 @@ if __name__ == "__main__":
     else:
         config.logging_dir = resolve_logging_dir(config) # update customised logging_dir
 
-    if args.remove_noise:
-        log_info(logger, "Agentic noise removal is on.")
-        from noise_modelling import noise_removal
-        if config.updated_train_dl_file:
-            assert os.path.exists(config.updated_train_dl_file), f"Updated train_dl file not found at {config.updated_train_dl_file}"
-            train_dl = torch.load(config.updated_train_dl_file, weights_only=False)
-            log_info(logger, f"Loaded updated train_dl from {config.updated_train_dl_file}")
-            config.logging_dir = os.path.dirname(config.updated_train_dl_file)
-        else:
-            log_info(logger, "No updated train_dl file found. So, training from scratch.")
-            config.batch_size = config.batch_sizes[0] # only the first batch_size is used for agentic
-            train_dl = noise_removal(
-                config=config,
-                delta=config.delta,
-                seed=config.seeds[0],
-                lr=config.lrs[0]
-            )
+    # if args.remove_noise:
+    #     log_info(logger, "Agentic noise removal is on.")
+    #     from noise_modelling import noise_removal
+    #     if config.updated_train_dl_file:
+    #         assert os.path.exists(config.updated_train_dl_file), f"Updated train_dl file not found at {config.updated_train_dl_file}"
+    #         train_dl = torch.load(config.updated_train_dl_file, weights_only=False)
+    #         log_info(logger, f"Loaded updated train_dl from {config.updated_train_dl_file}")
+    #         config.logging_dir = os.path.dirname(config.updated_train_dl_file)
+    #     else:
+    #         log_info(logger, "No updated train_dl file found. So, training from scratch.")
+    #         config.batch_size = config.batch_sizes[0] # only the first batch_size is used for agentic
+    #         train_dl = noise_removal(
+    #             config=config,
+    #             delta=config.delta,
+    #             seed=config.seeds[0],
+    #             lr=config.lrs[0]
+    #         )
 
     parent_logging_dir = config.logging_dir
     for lr in config.lrs:
@@ -150,4 +172,8 @@ if __name__ == "__main__":
             config.batch_size = batch_size
             log_info(logger, f"Current lr: {lr}, Current batch_size: {config.batch_size}")
             config.logging_dir = os.path.join(parent_logging_dir, f"lr_{lr}_bs_{config.batch_size}")
-            _seeds_sweep(config, do_test=config.do_test, delta=config.delta, lr=lr)
+            _seeds_sweep(
+                config, do_test=config.do_test, train_dl=None, delta=config.delta, lr=lr,
+                test_have_label=config.test_have_label, remove_noise=args.remove_noise,
+                debug=args.debug
+            )

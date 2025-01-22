@@ -6,11 +6,11 @@ from preprocess import DataModuleFromRaw
 import logging
 
 from utils import resolve_logging_dir, log_info, resolve_seed_wise_checkpoint, process_seedwise_metrics
-from model import load_model_from_ckpt
+from model import LightningPLM, ProbabilisticPLM
 
 logger = logging.getLogger(__name__)
 
-def test_plm(config: OmegaConf, have_label: bool = True, delta: float = 1.0, seed: int = 0) -> dict:
+def test_plm(config: OmegaConf, have_label: bool, delta: float, seed: int, remove_noise: bool) -> dict:
     assert os.path.exists(config.test_from_checkpoint), "valid test_from_checkpoint is required for test_mode"
     
     datamodule = DataModuleFromRaw(
@@ -25,7 +25,10 @@ def test_plm(config: OmegaConf, have_label: bool = True, delta: float = 1.0, see
     )
 
     with trainer.init_module(empty_init=True):
-        model = load_model_from_ckpt(config, config.test_from_checkpoint)
+        if remove_noise:
+            model = ProbabilisticPLM.load_from_checkpoint(config.test_from_checkpoint)
+        else:
+            model = LightningPLM.load_from_checkpoint(config.test_from_checkpoint, config=config)
 
     log_info(logger, f"Loaded model from {config.test_from_checkpoint}")
     
@@ -45,7 +48,10 @@ def test_plm(config: OmegaConf, have_label: bool = True, delta: float = 1.0, see
 
     return metrics
 
-def _test_multi_seeds(ckpt_parent_dir: str, config: OmegaConf, have_label: bool = True, delta: float = 1.0) -> None:
+def _test_multi_seeds(
+        ckpt_parent_dir: str, config: OmegaConf, have_label: bool, delta: float,
+        remove_noise: bool
+    ) -> None:
     results = []
 
     for seed in config.seeds:
@@ -53,7 +59,7 @@ def _test_multi_seeds(ckpt_parent_dir: str, config: OmegaConf, have_label: bool 
         log_info(logger, f"Current seed: {config.seed}")
         config.test_from_checkpoint = resolve_seed_wise_checkpoint(ckpt_parent_dir, seed)
         config.logging_dir = ckpt_parent_dir
-        test_metrics = test_plm(config, have_label, delta=delta, seed=seed)
+        test_metrics = test_plm(config, have_label, delta=delta, seed=seed, remove_noise=remove_noise)
         
         if have_label:
             # then we have metrics
@@ -67,6 +73,8 @@ def _test_multi_seeds(ckpt_parent_dir: str, config: OmegaConf, have_label: bool 
 
 if __name__ == "__main__":
     transformers.logging.set_verbosity_error()
+
+    raise NotImplementedError("remove_noise is not configured yet in test_multi_seeds function")
     
     config_test = OmegaConf.load("config/config_test.yaml")
     

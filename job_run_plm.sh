@@ -9,4 +9,4 @@
 #SBATCH --account=pawsey1001-gpu
 
 export TOKENIZERS_PARALLELISM=false
-python src/run_plm.py
+python src/run_plm.py -r

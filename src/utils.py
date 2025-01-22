@@ -221,13 +221,18 @@ def prepare_train_config(config: OmegaConf, remove_noise: bool) -> OmegaConf:
     log_info(logger, f"Val data: {config.val_file_list}")
     log_info(logger, f"Test data: {config.test_file_list}")
 
-    config.do_test = True
+    if len(config.lrs) > 1 or len(config.batch_sizes) > 1:
+        config.do_test = False
+    else:
+        config.do_test = True
 
     if config.val_data in [2023, 2022]:
         # only way to test is through CodaLab submission
-        config.do_test = False
-
-    config.make_ready_for_submission = False
+        config.test_have_label = False
+        config.make_ready_for_submission = True
+    else:
+        config.test_have_label = True
+        config.make_ready_for_submission = False
 
     return config
 

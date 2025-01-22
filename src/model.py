@@ -1,4 +1,4 @@
-from transformers import AutoModelForSequenceClassification, get_linear_schedule_with_warmup, get_polynomial_decay_schedule_with_warmup
+from transformers import AutoModel, AutoModelForSequenceClassification, get_linear_schedule_with_warmup, get_polynomial_decay_schedule_with_warmup
 import torch
 import lightning as L
 from lightning.pytorch.utilities import rank_zero_only
@@ -242,10 +242,166 @@ class LightningPLM(L.LightningModule):
 
         self.test_step_outputs.clear()
         self.test_step_labels.clear()
- 
-def init_model(config: OmegaConf, lr: float) -> L.LightningModule:
-    return LightningPLM(config, lr=lr)
+
+class ProbabilisticPLM(L.LightningModule):
+    def __init__(
+            self,
+            plm_name: str,
+            lr: float,
+            num_training_steps: int,
+            num_warmup_steps: int
+        ):
+        super().__init__()
+        self.save_hyperparameters()
+
+        self.plm = AutoModel.from_pretrained(plm_name)
+        self.fc_m = torch.nn.Linear(768, 1)
+        self.fc_v = torch.nn.Linear(768, 1)
+
+        self.lr = lr
+        self.num_training_steps = num_training_steps
+        self.num_warmup_steps = num_warmup_steps
+
+        self.gaussian_nll = torch.nn.GaussianNLLLoss()
+
+        self.min_score = 1.0
+        self.max_score = 7.0
+
+        self.validation_step_means = []
+        self.validation_step_labels = []
+        self.test_step_outputs = []
+        self.test_step_labels = []
+
+    def forward(self, batch):
+        output = self.plm(
+            input_ids=batch['input_ids'],
+            attention_mask=batch['attention_mask']
+        )
+
+        x = output.last_hidden_state[:, 0, :]
+        
+        x = torch.nn.functional.relu(x)
+
+        unbounded_mean = self.fc_m(x)
+        scaled_mean = self.min_score + (self.max_score - self.min_score) * torch.nn.functional.sigmoid(unbounded_mean)
+
+        var = torch.nn.functional.softplus(self.fc_v(x)) # variance must be positive
+        return scaled_mean.squeeze(), var.squeeze()
     
-def load_model_from_ckpt(config: OmegaConf, ckpt: str) -> L.LightningModule:
-    return LightningPLM.load_from_checkpoint(ckpt, config=config)
- 
+    def configure_optimizers(self):
+        optimiser = torch.optim.AdamW(
+            params=self.parameters(),
+            lr=self.lr,
+            betas=(0.0, 0.98),
+            eps=1e-6,
+            weight_decay=0.1
+        )
+
+        lr_scheduler = get_linear_schedule_with_warmup(
+            optimiser,
+            num_warmup_steps=self.num_warmup_steps,
+            num_training_steps=self.num_training_steps
+        )
+        
+        return {
+            "optimizer": optimiser,
+            "lr_scheduler": {
+                "scheduler": lr_scheduler,
+                "monitor": "val_loss",
+                "frequency": 1
+            }
+        }
+    
+    def training_step(self, batch, batch_idx):
+        mean, var = self(batch)
+
+        loss = self.gaussian_nll(mean, batch["labels"].squeeze(), var)
+
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        mean, var = self(batch)
+        loss = self.gaussian_nll(mean, batch["labels"].squeeze(), var)
+        self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+
+        self.validation_step_means.append(mean)
+        self.validation_step_labels.append(batch["labels"])
+    
+    def on_validation_epoch_end(self):
+        all_means = torch.cat(self.validation_step_means)
+        all_labels = torch.cat(self.validation_step_labels)
+
+        all_means = all_means.to(torch.float64).cpu()
+        all_labels = all_labels.to(torch.float64).cpu()
+
+        self.log(
+            "val_pcc",
+            pearson_corrcoef(all_means, all_labels),
+            logger=True,
+            prog_bar=False,
+            sync_dist=True
+        )
+
+        self.log(
+            "val_ccc",
+            concordance_corrcoef(all_means, all_labels),
+            logger=True,
+            prog_bar=True,
+            sync_dist=True
+        )
+
+        self.log(
+            "val_rmse",
+            mean_squared_error(all_means, all_labels, squared=False),
+            logger=True,
+            prog_bar=False,
+            sync_dist=True
+        )
+
+        self.validation_step_means.clear()
+        self.validation_step_labels.clear()
+
+    def test_step(self, batch, batch_idx):
+        mean, var = self(batch)
+        self.test_step_outputs.append(mean)
+
+        if "labels" in batch:
+            self.test_step_labels.append(batch["labels"])
+
+    def on_test_epoch_end(self):
+        all_means = torch.cat(self.test_step_outputs)
+        all_means = all_means.to(torch.float64).cpu()
+
+        if len(self.test_step_labels) > 0:
+            all_labels = torch.cat(self.test_step_labels)
+            all_labels = all_labels.to(torch.float64).cpu()
+
+            self.log(
+                "test_pcc",
+                pearson_corrcoef(all_means, all_labels),
+                logger=False,
+                prog_bar=True,
+                sync_dist=True
+            )
+
+            self.log(
+                "test_ccc",
+                concordance_corrcoef(all_means, all_labels),
+                logger=False,
+                prog_bar=True,
+                sync_dist=True
+            )
+
+            self.log(
+                "test_rmse",
+                mean_squared_error(all_means, all_labels, squared=False),
+                logger=False,
+                prog_bar=True,
+                sync_dist=True
+            )
+
+        self.test_step_outputs.clear()
+        self.test_step_labels.clear()
+        
