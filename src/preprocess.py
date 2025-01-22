@@ -82,7 +82,7 @@ class DataModuleFromRaw:
 
         selected_data = data[columns_to_keep]
 
-        if have_label:
+        if have_label and (mode == "val" or mode == "test"):
             log_info(logger, f"Santitising labels of {path} file.\n")
             selected_data = self._label_fix(selected_data)
         

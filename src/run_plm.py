@@ -1,9 +1,9 @@
 import os
+import argparse
 import logging
 import transformers
 import lightning as L
 from omegaconf import OmegaConf
-import warnings
 import glob
 import torch
 
@@ -95,21 +95,29 @@ def _seeds_sweep(config: OmegaConf, do_test: bool = False, train_dl: torch.utils
     process_seedwise_metrics(results, save_as)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--debug", action="store_true", help="Debug mode")
+    parser.add_argument("-r", "--remove_noise", action="store_true", help="Run noise removal")
+
+    args = parser.parse_args()
+
     transformers.logging.set_verbosity_error()
     config_train = OmegaConf.load("config/config_train.yaml")
     config_common = OmegaConf.load("config/config_common.yaml")
 
     config = OmegaConf.merge(config_common, config_train)
 
-    config = prepare_train_config(config)
+    config = prepare_train_config(config, remove_noise=args.remove_noise)
 
-    if config.debug_mode:
+    if args.debug:
+        config.debug_mode = True
         logger.setLevel(logging.DEBUG)
         config.seeds = config.seeds[:2] # reduce the number of seeds for debugging
         config.logging_dir = "./tmp"
         log_info(logger, f"Debug mode is on. Using {config.logging_dir} for storing log files.")
-        config.num_agents = 2
-        log_info(logger, f"Debug mode is on. Using {config.num_agents} agents for agentic noise removal.")
+        if args.remove_noise:
+            config.num_agents = 2
+            log_info(logger, f"Debug mode is on. Using {config.num_agents} networks for agentic noise removal.")
 
     if "overwrite_logging_dir" in config:
         log_info(logger, f"Using overwrite_logging_dir {config.overwrite_logging_dir}")
@@ -118,9 +126,9 @@ if __name__ == "__main__":
     else:
         config.logging_dir = resolve_logging_dir(config) # update customised logging_dir
 
-    if config.run_agentic:
+    if args.remove_noise:
         log_info(logger, "Agentic noise removal is on.")
-        from agentic_noise_removal import agentic_noise_removal
+        from noise_modelling import noise_removal
         if config.updated_train_dl_file:
             assert os.path.exists(config.updated_train_dl_file), f"Updated train_dl file not found at {config.updated_train_dl_file}"
             train_dl = torch.load(config.updated_train_dl_file, weights_only=False)
@@ -129,18 +137,17 @@ if __name__ == "__main__":
         else:
             log_info(logger, "No updated train_dl file found. So, training from scratch.")
             config.batch_size = config.batch_sizes[0] # only the first batch_size is used for agentic
-            train_dl = agentic_noise_removal(
+            train_dl = noise_removal(
                 config=config,
-                delta=0.5,
+                delta=config.delta,
                 seed=config.seeds[0],
                 lr=config.lrs[0]
             )
 
     parent_logging_dir = config.logging_dir
     for lr in config.lrs:
-        config.lr = lr
         for batch_size in config.batch_sizes:
             config.batch_size = batch_size
-            log_info(logger, f"Current lr: {config.lr}, Current batch_size: {config.batch_size}")
-            config.logging_dir = os.path.join(parent_logging_dir, f"lr_{config.lr}_bs_{config.batch_size}")
-            _seeds_sweep(config, do_test=config.do_test, delta=config.delta, lr=config.lr)
+            log_info(logger, f"Current lr: {lr}, Current batch_size: {config.batch_size}")
+            config.logging_dir = os.path.join(parent_logging_dir, f"lr_{lr}_bs_{config.batch_size}")
+            _seeds_sweep(config, do_test=config.do_test, delta=config.delta, lr=lr)

@@ -29,7 +29,7 @@ def _calculate_error(model, train_dl):
 
     return error_list, sample_ids_list
 
-def _find_noisy_samples_agentic(config, sample_list: list, delta: float, lr: float):
+def _find_noisy_samples(config, sample_list: list, delta: float, lr: float):
     error_df = pd.DataFrame(index=sample_list)
 
     raw_logging_dir = config.logging_dir # so that we don't nest
@@ -73,7 +73,7 @@ def _find_noisy_samples_agentic(config, sample_list: list, delta: float, lr: flo
 
     return hc_sample_ids, mc_sample_ids, lc_sample_ids
 
-def agentic_noise_removal(config, delta: float, seed: int, lr: float):
+def noise_removal(config, delta: float, seed: int, lr: float):
     config.seed = config.seeds[0] # just need for train_dl, that will be updated
     datamodule = DataModuleFromRaw(config, delta=delta, seed=seed)
     train_dl = datamodule.get_train_dl(data_path_list=config.train_file_list)
@@ -82,11 +82,11 @@ def agentic_noise_removal(config, delta: float, seed: int, lr: float):
         config.num_training_steps, config.num_warmup_steps = resolve_num_steps(config, train_dl)
 
     sample_list = train_dl.dataset["sample_id"].cpu().tolist()
-    hc_sample_ids, mc_sample_ids, lc_sample_ids = _find_noisy_samples_agentic(config, sample_list, delta=delta, lr=lr)
+    hc_sample_ids, mc_sample_ids, lc_sample_ids = _find_noisy_samples(config, sample_list, delta=delta, lr=lr)
     
     log_info(logger, f"HC: {len(hc_sample_ids)}, MC: {len(mc_sample_ids)}, LC: {len(lc_sample_ids)}")
     
-    if config.save_agentics_to_disk:
+    if config.save_ensembles_to_disk:
         # Saving noise_indices for analysis...
         np.save(os.path.join(config.logging_dir, "hc_sample_ids_" + str(config.noise_level) + ".npy"), hc_sample_ids)
         np.save(os.path.join(config.logging_dir, "mc_sample_ids_" + str(config.noise_level) + ".npy"), mc_sample_ids)
@@ -107,7 +107,7 @@ def agentic_noise_removal(config, delta: float, seed: int, lr: float):
 
     log_info(logger, f"Updated labels for {len(mc_set) + len(lc_set)} samples")
 
-    if config.save_agentics_to_disk:
+    if config.save_ensembles_to_disk:
         # save updated train_dl
         torch.save(train_dl, os.path.join(config.logging_dir, "updated_train_dl.pt"))
         log_info(logger, f"Saved updated train_dl to {config.logging_dir}/updated_train_dl.pt")

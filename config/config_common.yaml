@@ -9,6 +9,8 @@ label_column: empathy
 llm_column: llm_empathy
 feature_to_tokenise: ["essay"]
 
+delta: 2.0
+
 # all file list that we can use for training / validation / testing
 2024:
     train: data/NewsEmp2024/trac3_EMP_train.csv

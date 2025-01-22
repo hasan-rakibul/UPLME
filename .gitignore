@@ -1,11 +1,11 @@
-log_slurm/
-logs/
-log_archived/
-OTHERS/
-tmp/
-src/archived/
-src/ucvme/
-data/
+log_slurm/**
+log/**
+log_archived/**
+OTHERS/**
+tmp/**
+src/archived/**
+src/ucvme/**
+data/**
 
 .declare_api_key.sh
 analysis-and-visualisation.ipynb

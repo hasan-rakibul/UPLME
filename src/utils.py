@@ -33,7 +33,7 @@ class DelayedStartEarlyStopping(EarlyStopping):
             return
         super().on_validation_end(trainer, l_module)
 
-def get_trainer(config, devices="auto", extra_callbacks=None, enable_checkpointing=True, enable_early_stopping=True):
+def get_trainer(config, devices="auto", extra_callbacks=None, enable_checkpointing=True, enable_early_stopping=True, debug: bool = False):
     """
     By default, we have EarlyStopping.
     ModelCheckpoint is enabled if enable_checkpointing is True.
@@ -90,7 +90,7 @@ def get_trainer(config, devices="auto", extra_callbacks=None, enable_checkpointi
     callbacks.extend(extra_callbacks) if extra_callbacks else None
 
     trainer = L.Trainer(
-        max_epochs=1 if config.debug_mode else config.num_epochs,
+        max_epochs=1 if debug else config.num_epochs,
         default_root_dir=config.logging_dir,
         deterministic=True,
         logger=True,
@@ -98,7 +98,7 @@ def get_trainer(config, devices="auto", extra_callbacks=None, enable_checkpointi
         callbacks=callbacks,
         devices=devices,
         enable_checkpointing=enable_checkpointing,
-        limit_train_batches=0.1 if config.debug_mode else 1.0 
+        limit_train_batches=0.1 if debug else 1.0 
     )
 
     return trainer
@@ -189,9 +189,13 @@ def log_info(logger, msg):
 def log_debug(logger, msg):
     logger.debug(msg)
 
-def prepare_train_config(config: OmegaConf) -> OmegaConf:
+def prepare_train_config(config: OmegaConf, remove_noise: bool) -> OmegaConf:
+    if remove_noise:
+        purpose = "remove_noise"
+    else:
+        purpose = "training"
 
-    config.expt_name = f"agentic-{config.run_agentic}({','.join([str(data) for data in config.train_data])})"
+    config.expt_name = f"{purpose}_({','.join([str(data) for data in config.train_data])})"
 
     if config.expt_name_postfix != "":
         config.expt_name += f"-{config.expt_name_postfix}"
