@@ -8,6 +8,7 @@ import warnings
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.utilities import rank_zero_only
+from lightning.pytorch.loggers import WandbLogger
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -33,7 +34,10 @@ class DelayedStartEarlyStopping(EarlyStopping):
             return
         super().on_validation_end(trainer, l_module)
 
-def get_trainer(config, devices="auto", extra_callbacks=None, enable_checkpointing=True, enable_early_stopping=True, debug: bool = False):
+def get_trainer(
+        config, devices="auto", extra_callbacks=None, enable_checkpointing=True, enable_early_stopping=True,
+        debug: bool = False, expt_name: str = None, logging_dir: str = None
+    ):
     """
     By default, we have EarlyStopping.
     ModelCheckpoint is enabled if enable_checkpointing is True.
@@ -73,27 +77,26 @@ def get_trainer(config, devices="auto", extra_callbacks=None, enable_checkpointi
         #     save_top_k=1,
         #     mode="min"
         # )
-        if config.expt_name_postfix == "Giorgi2024Findings":
-            log_info(logger, "Using vall_pcc to reproduce Giorgi2024Findings")
-            checkpoint = ModelCheckpoint(
-                monitor="val_pcc",
-                save_top_k=1,
-                mode="max"
-            )
-        else:
-            checkpoint = ModelCheckpoint(
-                save_top_k=1 # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
-            )
+        
+        checkpoint = ModelCheckpoint(
+            save_top_k=1 # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
+        )
         
         callbacks.append(checkpoint)
         
     callbacks.extend(extra_callbacks) if extra_callbacks else None
 
+    wandb_logger = WandbLogger(
+        name=expt_name,
+        project="NoisEmpathy",
+        save_dir=logging_dir
+    )
+
     trainer = L.Trainer(
         max_epochs=1 if debug else config.num_epochs,
         default_root_dir=config.logging_dir,
         deterministic=True,
-        logger=True,
+        logger=wandb_logger if not debug else None,
         log_every_n_steps=10,
         callbacks=callbacks,
         devices=devices,
@@ -260,7 +263,7 @@ def resolve_num_steps(config: OmegaConf, train_dl) -> tuple:
         if "warmup_ratio" in config:
             warnings.warn("Both num_warmup_steps and warmup_ratio are provided. Ignoring warmup_ratio.")
     else:
-        num_warmup_steps = config.warmup_ratio * len(train_dl) * 10 # 10 epochs of warmup calculation, like the RoBERTa paper
+        num_warmup_steps = int(config.warmup_ratio * len(train_dl) * 10) # 10 epochs of warmup calculation, like the RoBERTa paper
     log_info(logger, f"Number of warmup steps: {num_warmup_steps}")
 
     return num_training_steps, num_warmup_steps

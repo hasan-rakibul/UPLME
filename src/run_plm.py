@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 def _train_validate_plm(
         config: OmegaConf, train_dl: torch.utils.data.DataLoader, 
-        delta: float, seed: int, lr: float, remove_noise: bool, debug: bool
+        delta: float, seed: int, lr: float, remove_noise: bool, debug: bool,
+        expt_name: str, logging_dir: str
     ) -> tuple:
     datamodule = DataModuleFromRaw(config, delta=delta, seed=seed)
     # if os.path.exists(config.logging_dir):
@@ -29,7 +30,10 @@ def _train_validate_plm(
     
     val_dl = datamodule.get_val_dl(data_path_list=config.val_file_list)
 
-    trainer = get_trainer(config, enable_early_stopping=config.enable_early_stopping, debug=debug)
+    trainer = get_trainer(
+        config, enable_early_stopping=config.enable_early_stopping, debug=debug,
+        expt_name=expt_name, logging_dir=logging_dir
+    )
 
     if config.lr_scheduler_type == "linear" or config.lr_scheduler_type == "polynomial":
         config.num_training_steps, config.num_warmup_steps = resolve_num_steps(config, train_dl)
@@ -87,7 +91,7 @@ def _seeds_sweep(
         config: OmegaConf, do_test: bool,
         train_dl: torch.utils.data.DataLoader, 
         delta: float, lr: float, test_have_label: bool,
-        remove_noise: bool, debug: bool
+        remove_noise: bool, debug: bool, expt_name: str
     ) -> None:
 
     parent_logging_dir = config.logging_dir
@@ -99,8 +103,10 @@ def _seeds_sweep(
 
         L.seed_everything(config.seed)
 
-        best_model_ckpt, metrics = _train_validate_plm(config, train_dl=train_dl, delta=delta, seed=seed, lr=lr,
-                                                       remove_noise=remove_noise, debug=debug)
+        best_model_ckpt, metrics = _train_validate_plm(
+            config, train_dl=train_dl, delta=delta, seed=seed, lr=lr,
+            remove_noise=remove_noise, debug=debug, expt_name=expt_name, logging_dir=config.logging_dir
+        )
         
         if do_test:
             # subsequent testing
@@ -150,7 +156,7 @@ if __name__ == "__main__":
 
     # if args.remove_noise:
     #     log_info(logger, "Agentic noise removal is on.")
-    #     from noise_modelling import noise_removal
+    #     from error_based_noise_modelling import noise_removal
     #     if config.updated_train_dl_file:
     #         assert os.path.exists(config.updated_train_dl_file), f"Updated train_dl file not found at {config.updated_train_dl_file}"
     #         train_dl = torch.load(config.updated_train_dl_file, weights_only=False)
@@ -175,5 +181,5 @@ if __name__ == "__main__":
             _seeds_sweep(
                 config, do_test=config.do_test, train_dl=None, delta=config.delta, lr=lr,
                 test_have_label=config.test_have_label, remove_noise=args.remove_noise,
-                debug=args.debug
+                debug=args.debug, expt_name=config.expt_name
             )
