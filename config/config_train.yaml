@@ -12,7 +12,7 @@ val_data: 2024 # test would be same as val_data as in in-sample setting
 
 llm: llama # llama or gpt
 
-expt_name_postfix: "weighted-nll" # postfix to be added in the experiment name
+expt_name_postfix: "loss-weights-10-no-penalty" # postfix to be added in the experiment name
 # overwrite_logging_dir: 
 # resume_train_from_checkpoint: 
 

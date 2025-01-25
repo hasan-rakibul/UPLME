@@ -8,7 +8,7 @@ import glob
 import torch
 
 from utils import log_info, resolve_logging_dir, process_seedwise_metrics, prepare_train_config, get_trainer, resolve_num_steps
-from model import LightningPLM, ProbabilisticPLM
+from model import LightningPLM, LightningProbabilisticPLM, LightningProbabilisticPLMEnsemble
 from preprocess import DataModuleFromRaw
 from test import test_plm
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 def _train_validate_plm(
         config: OmegaConf, train_dl: torch.utils.data.DataLoader, 
-        delta: float, seed: int, lr: float, remove_noise: bool, debug: bool,
+        delta: float, seed: int, lr: float, approach: str, debug: bool,
         expt_name: str, logging_dir: str
     ) -> tuple:
     datamodule = DataModuleFromRaw(config, delta=delta, seed=seed)
@@ -44,9 +44,16 @@ def _train_validate_plm(
     if not os.path.exists(config.logging_dir):
         with trainer.init_module():
             # model created here directly goes to GPU
-            if remove_noise:
-                model = ProbabilisticPLM(
+            if approach == "single-probabilistic":
+                model = LightningProbabilisticPLM(
                     plm_name=config.plm,
+                    lr=lr,
+                    num_training_steps=config.num_training_steps,
+                    num_warmup_steps=config.num_warmup_steps
+                )
+            elif approach == "ensemble-probabilistic":
+                model = LightningProbabilisticPLMEnsemble(
+                    plm_names=[config.plm, config.plm],
                     lr=lr,
                     num_training_steps=config.num_training_steps,
                     num_warmup_steps=config.num_warmup_steps
@@ -71,8 +78,10 @@ def _train_validate_plm(
     # final validation at the end of training
     log_info(logger, f"Loading the best model from {best_model_ckpt}")
     with trainer.init_module(empty_init=True):
-        if remove_noise:
-            model = ProbabilisticPLM.load_from_checkpoint(best_model_ckpt)
+        if approach == "single-probabilistic":
+            model = LightningProbabilisticPLM.load_from_checkpoint(best_model_ckpt)
+        elif approach == "ensemble-probabilistic":
+            model = LightningProbabilisticPLMEnsemble.load_from_checkpoint(best_model_ckpt)
         else:
             model = LightningPLM.load_from_checkpoint(best_model_ckpt, config=config)
 
@@ -91,7 +100,7 @@ def _seeds_sweep(
         config: OmegaConf, do_test: bool,
         train_dl: torch.utils.data.DataLoader, 
         delta: float, lr: float, test_have_label: bool,
-        remove_noise: bool, debug: bool, expt_name: str
+        approach: str, debug: bool, expt_name: str
     ) -> None:
 
     parent_logging_dir = config.logging_dir
@@ -105,7 +114,7 @@ def _seeds_sweep(
 
         best_model_ckpt, metrics = _train_validate_plm(
             config, train_dl=train_dl, delta=delta, seed=seed, lr=lr,
-            remove_noise=remove_noise, debug=debug, expt_name=expt_name, logging_dir=config.logging_dir
+            approach=approach, debug=debug, expt_name=expt_name, logging_dir=config.logging_dir
         )
         
         if do_test:
@@ -113,7 +122,7 @@ def _seeds_sweep(
             log_info(logger, f"Testing right after training from {best_model_ckpt}")
             config.test_from_checkpoint = best_model_ckpt
             config.logging_dir = resolve_logging_dir(config)
-            test_metrics = test_plm(config, have_label=test_have_label, delta=delta, seed=seed, remove_noise=remove_noise)
+            test_metrics = test_plm(config, have_label=test_have_label, delta=delta, seed=seed, approach=approach)
             metrics = {**metrics, **test_metrics} # merge the two dictionaries 
 
         metrics["seed"] = seed
@@ -125,7 +134,7 @@ def _seeds_sweep(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--debug", action="store_true", help="Debug mode")
-    parser.add_argument("-r", "--remove_noise", action="store_true", help="Run noise removal")
+    parser.add_argument("-a", "--approach", type=str, default="ensemble-probabilistic", help="Approach: basic, single-probabilistic, ensemble-probabilistic")
 
     args = parser.parse_args()
 
@@ -135,7 +144,7 @@ if __name__ == "__main__":
 
     config = OmegaConf.merge(config_common, config_train)
 
-    config = prepare_train_config(config, remove_noise=args.remove_noise)
+    config = prepare_train_config(config, approach=args.approach)
 
     if args.debug:
         config.debug_mode = True
@@ -143,9 +152,9 @@ if __name__ == "__main__":
         config.seeds = config.seeds[:2] # reduce the number of seeds for debugging
         config.logging_dir = "./tmp"
         log_info(logger, f"Debug mode is on. Using {config.logging_dir} for storing log files.")
-        if args.remove_noise:
-            config.num_agents = 2
-            log_info(logger, f"Debug mode is on. Using {config.num_agents} networks for agentic noise removal.")
+        # if args.approach == "ensemble-probabilistic":
+        #     config.num_agents = 2
+        #     log_info(logger, f"Debug mode is on. Using {config.num_agents} networks for agentic noise removal.")
 
     if "overwrite_logging_dir" in config:
         log_info(logger, f"Using overwrite_logging_dir {config.overwrite_logging_dir}")
@@ -180,6 +189,6 @@ if __name__ == "__main__":
             config.logging_dir = os.path.join(parent_logging_dir, f"lr_{lr}_bs_{config.batch_size}")
             _seeds_sweep(
                 config, do_test=config.do_test, train_dl=None, delta=config.delta, lr=lr,
-                test_have_label=config.test_have_label, remove_noise=args.remove_noise,
+                test_have_label=config.test_have_label, approach=args.approach,
                 debug=args.debug, expt_name=config.expt_name
             )

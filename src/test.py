@@ -6,11 +6,11 @@ from preprocess import DataModuleFromRaw
 import logging
 
 from utils import resolve_logging_dir, log_info, resolve_seed_wise_checkpoint, process_seedwise_metrics
-from model import LightningPLM, ProbabilisticPLM
+from model import LightningPLM, LightningProbabilisticPLM, LightningProbabilisticPLMEnsemble
 
 logger = logging.getLogger(__name__)
 
-def test_plm(config: OmegaConf, have_label: bool, delta: float, seed: int, remove_noise: bool) -> dict:
+def test_plm(config: OmegaConf, have_label: bool, delta: float, seed: int, approach: str) -> dict:
     assert os.path.exists(config.test_from_checkpoint), "valid test_from_checkpoint is required for test_mode"
     
     datamodule = DataModuleFromRaw(
@@ -25,8 +25,10 @@ def test_plm(config: OmegaConf, have_label: bool, delta: float, seed: int, remov
     )
 
     with trainer.init_module(empty_init=True):
-        if remove_noise:
-            model = ProbabilisticPLM.load_from_checkpoint(config.test_from_checkpoint)
+        if approach == "single-probabilistic":
+            model = LightningProbabilisticPLM.load_from_checkpoint(config.test_from_checkpoint)
+        elif approach == "ensemble-probabilistic":
+            model = LightningProbabilisticPLMEnsemble.load_from_checkpoint(config.test_from_checkpoint)
         else:
             model = LightningPLM.load_from_checkpoint(config.test_from_checkpoint, config=config)
 
@@ -73,13 +75,13 @@ def _test_multi_seeds(
 
 if __name__ == "__main__":
     transformers.logging.set_verbosity_error()
-
-    raise NotImplementedError("remove_noise is not configured yet in test_multi_seeds function")
     
     config_test = OmegaConf.load("config/config_test.yaml")
     
     config_common = OmegaConf.load("config/config_common.yaml")
     config = OmegaConf.merge(config_common, config_test)
+    
+    raise NotImplementedError("remove_noise is removed from the other parts of the code; use approach instead")
 
     if "test_from_checkpoint" in config:
         log_info(logger, f"Doing a single test using {config.test_from_checkpoint}")

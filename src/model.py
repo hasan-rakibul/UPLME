@@ -1,6 +1,7 @@
 from transformers import AutoModel, AutoModelForSequenceClassification, get_linear_schedule_with_warmup, get_polynomial_decay_schedule_with_warmup
 import torch
 from torch import Tensor
+import torch.nn.functional as F
 import lightning as L
 from lightning.pytorch.utilities import rank_zero_only
 from torchmetrics.functional import pearson_corrcoef, concordance_corrcoef, mean_squared_error
@@ -13,34 +14,21 @@ from utils import log_info
 
 logger = logging.getLogger(__name__)
 
-class ProbabilisticPLM(L.LightningModule):
+class ProbabilisticPLM(torch.nn.Module):
     def __init__(
-            self,
-            plm_name: str,
-            lr: float,
-            num_training_steps: int,
-            num_warmup_steps: int
-        ):
+        self,
+        plm_name: str,
+        lr: float
+    ):
         super().__init__()
-        self.save_hyperparameters()
-
         self.plm = AutoModel.from_pretrained(plm_name)
         self.fc_m = torch.nn.Linear(768, 1)
         self.fc_v = torch.nn.Linear(768, 1)
 
         self.lr = lr
-        self.num_training_steps = num_training_steps
-        self.num_warmup_steps = num_warmup_steps
-        
-        self.penalty_weight = 0.01
 
         self.min_score = 1.0
         self.max_score = 7.0
-
-        self.validation_step_means = []
-        self.validation_step_labels = []
-        self.test_step_outputs = []
-        self.test_step_labels = []
 
     def forward(self, batch):
         output = self.plm(
@@ -57,6 +45,33 @@ class ProbabilisticPLM(L.LightningModule):
 
         var = torch.nn.functional.softplus(self.fc_v(x)) # variance must be positive
         return scaled_mean.squeeze(), var.squeeze()
+
+class LightningProbabilisticPLM(L.LightningModule):
+    def __init__(
+        self,
+        plm_name: str,
+        lr: float,
+        num_training_steps: int,
+        num_warmup_steps: int,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+
+        self.model = ProbabilisticPLM(plm_name=plm_name, lr=lr) 
+
+        self.lr = lr
+        self.num_training_steps = num_training_steps
+        self.num_warmup_steps = num_warmup_steps
+        
+        self.penalty_weight = 0.01
+
+        self.validation_step_means = []
+        self.validation_step_labels = []
+        self.test_step_outputs = []
+        self.test_step_labels = []
+
+    def forward(self, batch):
+        return self.model(batch)
     
     def configure_optimizers(self):
         optimiser = torch.optim.AdamW(
@@ -106,9 +121,9 @@ class ProbabilisticPLM(L.LightningModule):
         penalty_loss = self.penalty_weight * self._calculate_penalty(var)
         loss = nll_loss + penalty_loss
 
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        self.log("train_nll_loss", nll_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        self.log("train_penalty_loss", penalty_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log("train_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log("train_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
         return loss
     
@@ -117,9 +132,9 @@ class ProbabilisticPLM(L.LightningModule):
         nll_loss = self._calculate_nll(mean=mean, var=var, labels=batch["labels"])
         penalty_loss = self.penalty_weight * self._calculate_penalty(var)
         loss = nll_loss + penalty_loss
-        self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        self.log("val_nll_loss", nll_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        self.log("val_penalty_loss", penalty_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log("val_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log("val_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
         self.validation_step_means.append(mean)
         self.validation_step_labels.append(batch["labels"])
@@ -199,6 +214,214 @@ class ProbabilisticPLM(L.LightningModule):
 
         self.test_step_outputs.clear()
         self.test_step_labels.clear()
+
+class LightningProbabilisticPLMEnsemble(L.LightningModule):
+    def __init__(
+        self,
+        plm_names: list[str],
+        lr: float,
+        num_training_steps: int,
+        num_warmup_steps: int
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+
+        self.models = torch.nn.ModuleList([
+            ProbabilisticPLM(plm_name=plm, lr=lr) for plm in plm_names
+        ])
+
+        self.lr = lr
+        self.num_training_steps = num_training_steps
+        self.num_warmup_steps = num_warmup_steps
+        
+        self.consistency_weight = 100
+        # self.penalty_weight = 10
+        self.log("consistency_weight", self.consistency_weight)
+        # self.log("penalty_weight", self.penalty_weight)
+
+        self.model_weights = torch.nn.Parameter(
+            torch.ones(len(plm_names)) / len(plm_names),
+            requires_grad=True
+        )
+
+        self.validation_outputs = []
+        self.test_outputs = []
+
+    def forward(self, batch):
+        means = []
+        variances = []
+        for model in self.models:
+            mean, var = model(batch)
+            means.append(mean)
+            variances.append(var)
+        means_tensor = torch.stack(means) # (num_models, batch_size)
+        variances_tensor = torch.stack(variances)
+
+        # weighted ensemble
+        weights = F.softmax(self.model_weights, dim=0) # (num_models,)
+
+        ensemble_mean = torch.sum(means_tensor * weights.unsqueeze(-1), dim=0) # (batch_size,)
+        ensemble_var = torch.sum(variances_tensor * (weights.unsqueeze(-1)**2), dim=0)
+
+        return ensemble_mean, ensemble_var, variances_tensor
+    
+    def compute_and_log_loss(self, ensemble_mean, ensemble_var, labels, variances, mode):
+        nll_loss = F.gaussian_nll_loss(ensemble_mean.squeeze(), labels.squeeze(), ensemble_var.squeeze())
+
+        # simple consistency of ensemble_var
+        # z = torch.log(ensemble_var)
+        # consistency_loss = self.consistency_weight * torch.mean((z - torch.mean(z))**2)
+
+        # consistency loss like UCVME but for any number of models
+        consistency_losses = []
+        for i in range(len(variances)):
+            for j in range(i+1, len(variances)):
+                consistency_loss = torch.mean((torch.log(variances[i]) - torch.log(variances[j]))**2)
+                consistency_losses.append(consistency_loss)
+
+        consistency_loss = self.consistency_weight * torch.mean(torch.stack(consistency_losses))
+
+        # simple L2 penalty
+        # variance_penalty_loss = self.penalty_weight * torch.norm(ensemble_var, p=2)
+
+        # model-level variance penalty
+        # variance_penalty_losses = []
+        # for var in variances:
+        #     variance_penalty_loss = torch.norm(var, p=2)
+        #     variance_penalty_losses.append(variance_penalty_loss)
+
+        # variance_penalty_loss = self.penalty_weight * torch.mean(torch.stack(variance_penalty_losses))
+
+        # total_loss = nll_loss + consistency_loss + variance_penalty_loss
+        total_loss = nll_loss + consistency_loss
+
+        self.log(f"{mode}_loss", total_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log(f"{mode}_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log(f"{mode}_consistency_loss", consistency_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        # self.log(f"{mode}_penalty_loss", variance_penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+
+        return total_loss
+    
+    def configure_optimizers(self):
+        optimiser = torch.optim.AdamW(
+            params=self.parameters(),
+            lr=self.lr,
+            betas=(0.0, 0.98),
+            eps=1e-6,
+            weight_decay=0.1
+        )
+
+        lr_scheduler = get_linear_schedule_with_warmup(
+            optimiser,
+            num_warmup_steps=self.num_warmup_steps,
+            num_training_steps=self.num_training_steps
+        )
+        
+        return {
+            "optimizer": optimiser,
+            "lr_scheduler": {
+                "scheduler": lr_scheduler,
+                "monitor": "val_loss",
+                "frequency": 1
+            }
+        }
+    
+    def training_step(self, batch, batch_idx):
+        ensemble_mean, ensemble_var, indiv_var = self(batch)
+        loss = self.compute_and_log_loss(ensemble_mean, ensemble_var, batch["labels"], indiv_var, mode="train")
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        ensemble_mean, ensemble_var, indiv_var = self(batch)
+        _ = self.compute_and_log_loss(ensemble_mean, ensemble_var, batch["labels"], indiv_var, mode="val")
+
+        self.validation_outputs.append({
+            "mean": ensemble_mean,
+            "var": ensemble_var,
+            "label": batch["labels"]
+        })
+
+    def on_validation_epoch_end(self):
+        all_means = torch.cat([out["mean"] for out in self.validation_outputs])
+        all_labels = torch.cat([out["label"] for out in self.validation_outputs])
+
+        all_means = all_means.to(torch.float64).cpu()
+        all_labels = all_labels.to(torch.float64).cpu()
+
+        self.log(
+            "val_pcc",
+            pearson_corrcoef(all_means, all_labels),
+            logger=True,
+            prog_bar=False,
+            sync_dist=True
+        )
+
+        self.log(
+            "val_ccc",
+            concordance_corrcoef(all_means, all_labels),
+            logger=True,
+            prog_bar=True,
+            sync_dist=True
+        )
+
+        self.log(
+            "val_rmse",
+            mean_squared_error(all_means, all_labels, squared=False),
+            logger=True,
+            prog_bar=False,
+            sync_dist=True
+        )
+
+        self.validation_outputs.clear()
+
+    def test_step(self, batch, batch_idx):
+        ensemble_mean, ensemble_var, _ = self(batch)
+
+        if "labels" in batch:
+            self.test_outputs.append({
+                "mean": ensemble_mean,
+                "var": ensemble_var,
+                "label": batch["labels"]
+            })
+        else:
+            self.test_outputs.append({
+                "mean": ensemble_mean,
+                "var": ensemble_var
+            })
+
+    def on_test_epoch_end(self):
+        all_means = torch.cat([out["mean"] for out in self.test_outputs])
+        all_means = all_means.to(torch.float64).cpu()
+
+        if "label" in self.test_outputs[0]:
+            all_labels = torch.cat([out["label"] for out in self.test_outputs])
+            all_labels = all_labels.to(torch.float64).cpu()
+
+            self.log(
+                "test_pcc",
+                pearson_corrcoef(all_means, all_labels),
+                logger=False,
+                prog_bar=True,
+                sync_dist=True
+            )
+
+            self.log(
+                "test_ccc",
+                concordance_corrcoef(all_means, all_labels),
+                logger=False,
+                prog_bar=True,
+                sync_dist=True
+            )
+
+            self.log(
+                "test_rmse",
+                mean_squared_error(all_means, all_labels, squared=False),
+                logger=False,
+                prog_bar=True,
+                sync_dist=True
+            )
+
+        self.test_outputs.clear()
         
 
 class LightningPLM(L.LightningModule):

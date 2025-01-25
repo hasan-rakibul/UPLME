@@ -192,13 +192,8 @@ def log_info(logger, msg):
 def log_debug(logger, msg):
     logger.debug(msg)
 
-def prepare_train_config(config: OmegaConf, remove_noise: bool) -> OmegaConf:
-    if remove_noise:
-        purpose = "remove_noise"
-    else:
-        purpose = "training"
-
-    config.expt_name = f"{purpose}_({','.join([str(data) for data in config.train_data])})"
+def prepare_train_config(config: OmegaConf, approach: str) -> OmegaConf:
+    config.expt_name = f"{approach}_({','.join([str(data) for data in config.train_data])})"
 
     if config.expt_name_postfix != "":
         config.expt_name += f"-{config.expt_name_postfix}"
