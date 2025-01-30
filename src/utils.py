@@ -93,7 +93,7 @@ def get_trainer(
     )
 
     trainer = L.Trainer(
-        max_epochs=1 if debug else config.num_epochs,
+        max_epochs=config.num_epochs,
         default_root_dir=config.logging_dir,
         deterministic=True,
         logger=wandb_logger if not debug else None,

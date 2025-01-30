@@ -17,18 +17,19 @@ logger = logging.getLogger(__name__)
 def _train_validate_plm(
         config: OmegaConf, train_dl: torch.utils.data.DataLoader, 
         delta: float, seed: int, lr: float, approach: str, debug: bool,
-        expt_name: str, logging_dir: str
+        expt_name: str, logging_dir: str, loss_weights: list = None,
+        batch_size: int = None
     ) -> tuple:
     datamodule = DataModuleFromRaw(config, delta=delta, seed=seed)
     # if os.path.exists(config.logging_dir):
     #     log_info(logger, f"Seed-level logging directory already exists: {config.logging_dir}. So, validating on the saved ckpt...")
 
     if train_dl is None:
-        train_dl = datamodule.get_train_dl(data_path_list=config.train_file_list)
+        train_dl = datamodule.get_train_dl(data_path_list=config.train_file_list, batch_size=batch_size)
     else:
         log_info(logger, "Training data loader is provided. So, skipping the training data loader creation.")
     
-    val_dl = datamodule.get_val_dl(data_path_list=config.val_file_list)
+    val_dl = datamodule.get_val_dl(data_path_list=config.val_file_list, batch_size=batch_size)
 
     trainer = get_trainer(
         config, enable_early_stopping=config.enable_early_stopping, debug=debug,
@@ -56,7 +57,8 @@ def _train_validate_plm(
                     plm_names=[config.plm, config.plm],
                     lr=lr,
                     num_training_steps=config.num_training_steps,
-                    num_warmup_steps=config.num_warmup_steps
+                    num_warmup_steps=config.num_warmup_steps,
+                    loss_weights=loss_weights
                 )
             else:
                 model = LightningPLM(config, lr=lr)
@@ -100,7 +102,8 @@ def _seeds_sweep(
         config: OmegaConf, do_test: bool,
         train_dl: torch.utils.data.DataLoader, 
         delta: float, lr: float, test_have_label: bool,
-        approach: str, debug: bool, expt_name: str
+        approach: str, debug: bool, expt_name: str, loss_weights: list = None,
+        batch_size: int = None
     ) -> None:
 
     parent_logging_dir = config.logging_dir
@@ -114,7 +117,8 @@ def _seeds_sweep(
 
         best_model_ckpt, metrics = _train_validate_plm(
             config, train_dl=train_dl, delta=delta, seed=seed, lr=lr,
-            approach=approach, debug=debug, expt_name=expt_name, logging_dir=config.logging_dir
+            approach=approach, debug=debug, expt_name=expt_name, logging_dir=config.logging_dir,
+            loss_weights=loss_weights, batch_size=batch_size
         )
         
         if do_test:
@@ -152,6 +156,8 @@ if __name__ == "__main__":
         config.seeds = config.seeds[:2] # reduce the number of seeds for debugging
         config.logging_dir = "./tmp"
         log_info(logger, f"Debug mode is on. Using {config.logging_dir} for storing log files.")
+        config.num_epochs = 2
+        
         # if args.approach == "ensemble-probabilistic":
         #     config.num_agents = 2
         #     log_info(logger, f"Debug mode is on. Using {config.num_agents} networks for agentic noise removal.")
@@ -184,11 +190,11 @@ if __name__ == "__main__":
     parent_logging_dir = config.logging_dir
     for lr in config.lrs:
         for batch_size in config.batch_sizes:
-            config.batch_size = batch_size
-            log_info(logger, f"Current lr: {lr}, Current batch_size: {config.batch_size}")
-            config.logging_dir = os.path.join(parent_logging_dir, f"lr_{lr}_bs_{config.batch_size}")
+            log_info(logger, f"Current lr: {lr}, Current batch_size: {batch_size}")
+            config.logging_dir = os.path.join(parent_logging_dir, f"lr_{lr}_bs_{batch_size}")
             _seeds_sweep(
                 config, do_test=config.do_test, train_dl=None, delta=config.delta, lr=lr,
                 test_have_label=config.test_have_label, approach=args.approach,
-                debug=args.debug, expt_name=config.expt_name
+                debug=args.debug, expt_name=config.expt_name,
+                loss_weights=config.loss_weights, batch_size=batch_size
             )

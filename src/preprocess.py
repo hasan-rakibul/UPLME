@@ -128,9 +128,12 @@ class DataModuleFromRaw:
 
         # all_data.to_csv(f"tmp/all_{mode}_data.tsv", sep='\t', index=False) # save the data for debugging
 
-        if mode == "train":
-            # add sample_id column
-            all_data['sample_id'] = range(len(all_data))     
+        # if mode == "train":
+        #     # add sample_id column
+        #     all_data['sample_id'] = range(len(all_data))
+
+        if self.config.llm_column in all_data.columns:
+            all_data = all_data.drop(columns=[self.config.llm_column])   
 
         all_data_hf = Dataset.from_pandas(all_data, preserve_index=False) # convert to huggingface dataset
         
@@ -152,7 +155,7 @@ class DataModuleFromRaw:
         np.random.seed(worker_seed)
         random.seed(worker_seed) 
     
-    def _get_dl(self, data_path_list, have_label, shuffle, mode):
+    def _get_dl(self, data_path_list, have_label, shuffle, mode, batch_size):
         # making sure the shuffling is reproducible
         g = torch.Generator()
         g.manual_seed(self.seed)
@@ -160,7 +163,7 @@ class DataModuleFromRaw:
         hf_data = self.get_hf_data(data_path_list=data_path_list, have_label=have_label, mode=mode)
         return DataLoader(
             hf_data,
-            batch_size=self.config.batch_size, 
+            batch_size=batch_size, 
             shuffle=shuffle,
             collate_fn=self.data_collator,
             num_workers=self.config.num_workers,
@@ -168,13 +171,13 @@ class DataModuleFromRaw:
             worker_init_fn=self._seed_worker,
             generator=g
         )
-    def get_train_dl(self, data_path_list):
-        return self._get_dl(data_path_list, have_label=True, shuffle=True, mode="train")
+    def get_train_dl(self, data_path_list, batch_size):
+        return self._get_dl(data_path_list, have_label=True, shuffle=True, mode="train", batch_size=batch_size)
     
-    def get_val_dl(self, data_path_list):
+    def get_val_dl(self, data_path_list, batch_size):
         # depending on data_name, the labels can be in different file
-        return self._get_dl(data_path_list, have_label=True, shuffle=False, mode="val")
+        return self._get_dl(data_path_list, have_label=True, shuffle=False, mode="val", batch_size=batch_size)
     
-    def get_test_dl(self, data_path_list, have_label=False):
-        return self._get_dl(data_path_list, have_label=have_label, shuffle=False, mode="test") # we have labels in 2024 data
+    def get_test_dl(self, data_path_list, batch_size=32, have_label=False):
+        return self._get_dl(data_path_list, have_label=have_label, shuffle=False, mode="test", batch_size=batch_size) # we have labels in 2024 data
     

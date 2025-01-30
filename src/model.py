@@ -44,6 +44,7 @@ class ProbabilisticPLM(torch.nn.Module):
         scaled_mean = self.min_score + (self.max_score - self.min_score) * torch.nn.functional.sigmoid(unbounded_mean)
 
         var = torch.nn.functional.softplus(self.fc_v(x)) # variance must be positive
+
         return scaled_mean.squeeze(), var.squeeze()
 
 class LightningProbabilisticPLM(L.LightningModule):
@@ -121,7 +122,7 @@ class LightningProbabilisticPLM(L.LightningModule):
         penalty_loss = self.penalty_weight * self._calculate_penalty(var)
         loss = nll_loss + penalty_loss
 
-        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
         self.log("train_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
         self.log("train_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
@@ -221,7 +222,8 @@ class LightningProbabilisticPLMEnsemble(L.LightningModule):
         plm_names: list[str],
         lr: float,
         num_training_steps: int,
-        num_warmup_steps: int
+        num_warmup_steps: int,
+        loss_weights: list[float]
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -234,10 +236,8 @@ class LightningProbabilisticPLMEnsemble(L.LightningModule):
         self.num_training_steps = num_training_steps
         self.num_warmup_steps = num_warmup_steps
         
-        self.consistency_weight = 100
-        # self.penalty_weight = 10
-        self.log("consistency_weight", self.consistency_weight)
-        # self.log("penalty_weight", self.penalty_weight)
+        self.loss_weights = loss_weights
+        assert len(self.loss_weights) == 2, "Check if the number of loss weights is correct"
 
         self.model_weights = torch.nn.Parameter(
             torch.ones(len(plm_names)) / len(plm_names),
@@ -274,31 +274,31 @@ class LightningProbabilisticPLMEnsemble(L.LightningModule):
 
         # consistency loss like UCVME but for any number of models
         consistency_losses = []
+        variances = torch.clamp(variances, min=1e-8)
         for i in range(len(variances)):
             for j in range(i+1, len(variances)):
                 consistency_loss = torch.mean((torch.log(variances[i]) - torch.log(variances[j]))**2)
                 consistency_losses.append(consistency_loss)
 
-        consistency_loss = self.consistency_weight * torch.mean(torch.stack(consistency_losses))
+        consistency_loss = self.loss_weights[0] * torch.mean(torch.stack(consistency_losses))
 
         # simple L2 penalty
         # variance_penalty_loss = self.penalty_weight * torch.norm(ensemble_var, p=2)
 
         # model-level variance penalty
-        # variance_penalty_losses = []
-        # for var in variances:
-        #     variance_penalty_loss = torch.norm(var, p=2)
-        #     variance_penalty_losses.append(variance_penalty_loss)
+        variance_penalty_losses = []
+        for var in variances:
+            variance_penalty_loss = torch.norm(var, p=2)
+            variance_penalty_losses.append(variance_penalty_loss)
 
-        # variance_penalty_loss = self.penalty_weight * torch.mean(torch.stack(variance_penalty_losses))
+        variance_penalty_loss = self.loss_weights[1] * torch.mean(torch.stack(variance_penalty_losses))
 
-        # total_loss = nll_loss + consistency_loss + variance_penalty_loss
-        total_loss = nll_loss + consistency_loss
+        total_loss = nll_loss + consistency_loss + variance_penalty_loss
 
         self.log(f"{mode}_loss", total_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
         self.log(f"{mode}_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
         self.log(f"{mode}_consistency_loss", consistency_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        # self.log(f"{mode}_penalty_loss", variance_penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log(f"{mode}_penalty_loss", variance_penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
         return total_loss
     

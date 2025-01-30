@@ -1,6 +1,6 @@
 # common between train and test
-# seeds: [0, 42, 100, 999, 1234]
-seeds: [0]
+seeds: [0, 42, 100, 999, 1234]
+# seeds: [0]
 num_workers: 12
 plm: roberta-base
 # plm: siebert/sentiment-roberta-large-english
