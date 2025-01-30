@@ -21,6 +21,10 @@ class DataModuleFromRaw:
 
         self.delta = delta
         self.seed = seed
+        self.label_shift = 3.0
+        self.noise_level = 0.2
+        self.label_min = 1.0
+        self.label_max = 7.0
 
         self.config = config
         
@@ -46,6 +50,30 @@ class DataModuleFromRaw:
         data = data.drop(columns=[self.config.llm_column])
 
         return data
+    
+    def _flip_labels(self, data: pd.DataFrame) -> pd.DataFrame:
+        np.random.seed(self.seed)
+        num_noisy_samples = int(self.noise_level * len(data))
+        data["noise"] = 0.0
+
+        noisy_indices = np.random.choice(data.index, size=num_noisy_samples, replace=False)
+
+        label_middle = (self.label_max + self.label_min) / 2
+        for idx in noisy_indices:
+            original_label = data.at[idx, self.config.label_column]
+            if original_label > label_middle:
+                # high labels are flipped to lower labels
+                new_label = max(self.label_min, original_label - self.label_shift)
+                noise_amount = original_label - new_label
+            else:
+                # low labels are flipped to higher labels
+                new_label = min(self.label_max, original_label + self.label_shift)
+                noise_amount = new_label - original_label
+            data.at[idx, self.config.label_column] = new_label
+            data.at[idx, "noise"] = noise_amount
+
+        return data
+        
     
     def _raw_to_processed(self, path: str, have_label: bool, mode: str) -> pd.DataFrame:
         log_info(logger, f"\nReading data from {path}")
@@ -82,9 +110,12 @@ class DataModuleFromRaw:
 
         selected_data = data[columns_to_keep]
 
-        if have_label and (mode == "val" or mode == "test"):
-            log_info(logger, f"Santitising labels of {path} file.\n")
-            selected_data = self._label_fix(selected_data)
+        # if have_label and (mode == "val" or mode == "test"):
+        log_info(logger, f"Santitising labels of {path} file.\n")
+        selected_data = self._label_fix(selected_data)
+        if mode == "train":
+            log_info(logger, f"Flipping labels of {path} file.\n")
+            selected_data = self._flip_labels(selected_data)
         
         if selected_data.isna().any().any(): 
             log_info(logger, f"Columns {selected_data.columns[selected_data.isna().any()].tolist()} have {selected_data.isna().sum().sum()} NaN values in total.")

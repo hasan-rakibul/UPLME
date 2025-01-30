@@ -32,7 +32,8 @@ def objective(
 
     # things to tune
     consistency_weight = trial.suggest_float("consistency_weight", 0.0, 100.0)
-    penalty_weight = trial.suggest_float("penalty_weight", 0.0, 100.0)
+    # penalty_weight = trial.suggest_float("penalty_weight", 0.0, 100.0)
+    penalty_weight = 0.0
     loss_weights = [consistency_weight, penalty_weight]
     
     L.seed_everything(seed)
@@ -50,7 +51,7 @@ def objective(
         extra_callbacks = None
     else:
         extra_callbacks = [
-            PyTorchLightningPruningCallback(trial, monitor="val_pcc")
+            PyTorchLightningPruningCallback(trial, monitor="val_ccc")
         ]
 
     trainer = get_trainer(

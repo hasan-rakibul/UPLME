@@ -47,7 +47,7 @@ class ProbabilisticPLM(torch.nn.Module):
 
         return scaled_mean.squeeze(), var.squeeze()
 
-class LightningProbabilisticPLM(L.LightningModule):
+class LightningProbabilisticPLMSingle(L.LightningModule):
     def __init__(
         self,
         plm_name: str,
@@ -64,8 +64,6 @@ class LightningProbabilisticPLM(L.LightningModule):
         self.num_training_steps = num_training_steps
         self.num_warmup_steps = num_warmup_steps
         
-        self.penalty_weight = 0.01
-
         self.validation_step_means = []
         self.validation_step_labels = []
         self.test_step_outputs = []
@@ -98,44 +96,21 @@ class LightningProbabilisticPLM(L.LightningModule):
             }
         }
     
-    def _calculate_nll(self, mean: Tensor, var: Tensor, labels: Tensor) -> Tensor:
-        gaussian_nll = torch.nn.GaussianNLLLoss(reduction='mean')
-        nll = gaussian_nll(mean, labels.squeeze(), var)
-        return nll
-    
-    def _calculate_penalty(self, var: Tensor) -> Tensor:
-        penalty = torch.mean(torch.square(var))
-        return penalty
+    def compute_and_log_loss(self, mean, var, labels, mode):
+        nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
 
+        self.log(f"{mode}_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
-        # weighted_nll = nll * (1 / (std + 1e-8))
-
-        # weighted_nll = torch.mean(weighted_nll)
-
-        # return weighted_nll
-
+        return nll_loss
     
     def training_step(self, batch, batch_idx):
         mean, var = self(batch)
-
-        nll_loss = self._calculate_nll(mean=mean, var=var, labels=batch["labels"])
-        penalty_loss = self.penalty_weight * self._calculate_penalty(var)
-        loss = nll_loss + penalty_loss
-
-        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, sync_dist=True)
-        self.log("train_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        self.log("train_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-
+        loss = self.compute_and_log_loss(mean, var, batch["labels"], mode="train")
         return loss
     
     def validation_step(self, batch, batch_idx):
         mean, var = self(batch)
-        nll_loss = self._calculate_nll(mean=mean, var=var, labels=batch["labels"])
-        penalty_loss = self.penalty_weight * self._calculate_penalty(var)
-        loss = nll_loss + penalty_loss
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        self.log("val_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        self.log("val_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        _ = self.compute_and_log_loss(mean, var, batch["labels"], mode="val")
 
         self.validation_step_means.append(mean)
         self.validation_step_labels.append(batch["labels"])

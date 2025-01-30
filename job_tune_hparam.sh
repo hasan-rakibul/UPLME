@@ -2,7 +2,7 @@
  
 #SBATCH --job-name=OptunaTune
 #SBATCH --output=log_slurm/%j_%x.out
-#SBATCH --time=24:00:00
+#SBATCH --time=12:00:00
 #SBATCH --nodes=1
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
@@ -10,4 +10,4 @@
 
 export TOKENIZERS_PARALLELISM=false
 
-python src/tune_hparam.py -n 500
+python src/tune_hparam.py -n 100

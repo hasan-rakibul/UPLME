@@ -6,8 +6,7 @@ val_data: 2024 # test would be same as val_data as in in-sample setting
 
 llm: llama # llama or gpt
 
-expt_name_postfix: "no-penalty-multi-seeds" # postfix to be added in the experiment name
-# overwrite_logging_dir: 
+# overwrite_logging_dir: log/20250130_093518_ensemble-probabilistic_(2024,2022)-no-penalty-multi-seeds 
 # resume_train_from_checkpoint: 
 
 enable_early_stopping: True
@@ -28,6 +27,7 @@ loss_weights: [100.0, 0.0]
 logging_dir: ./log
 freeze_plm: False
 
+# FIXME: these are hardcoded in the latest models
 adamw_beta1: 0.9
 adamw_beta2: 0.98
 adamw_eps: 1.0e-06

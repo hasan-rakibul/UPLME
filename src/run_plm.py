@@ -8,7 +8,7 @@ import glob
 import torch
 
 from utils import log_info, resolve_logging_dir, process_seedwise_metrics, prepare_train_config, get_trainer, resolve_num_steps
-from model import LightningPLM, LightningProbabilisticPLM, LightningProbabilisticPLMEnsemble
+from model import LightningPLM, LightningProbabilisticPLMSingle, LightningProbabilisticPLMEnsemble
 from preprocess import DataModuleFromRaw
 from test import test_plm
 
@@ -39,14 +39,21 @@ def _train_validate_plm(
     if config.lr_scheduler_type == "linear" or config.lr_scheduler_type == "polynomial":
         config.num_training_steps, config.num_warmup_steps = resolve_num_steps(config, train_dl)
 
-    log_info(logger, "Training from scratch")
     # https://lightning.ai/docs/pytorch/stable/advanced/model_init.html
 
-    if not os.path.exists(config.logging_dir):
+    if os.path.exists(config.logging_dir):
+        log_info(logger, f"Seed-level logging directory already exists: {config.logging_dir}. So, validating on the saved ckpt...")
+        ckpt_list = glob.glob(os.path.join(config.logging_dir, "**/*.ckpt"), recursive=True)
+        assert len(ckpt_list) == 1, f"Number of ckpt is not 1."
+        best_model_ckpt = ckpt_list[0]
+    else:
+        log_info(logger, f"Training from scratch")  
         with trainer.init_module():
             # model created here directly goes to GPU
-            if approach == "single-probabilistic":
-                model = LightningProbabilisticPLM(
+            if approach == "basic":
+                model = LightningPLM(config, lr=lr)
+            elif approach == "single-probabilistic":
+                model = LightningProbabilisticPLMSingle(
                     plm_name=config.plm,
                     lr=lr,
                     num_training_steps=config.num_training_steps,
@@ -61,31 +68,28 @@ def _train_validate_plm(
                     loss_weights=loss_weights
                 )
             else:
-                model = LightningPLM(config, lr=lr)
+                raise ValueError(f"Invalid approach: {approach}")
         
         trainer.fit(
             model=model,
             train_dataloaders=train_dl,
             val_dataloaders=val_dl
         )
-    
-    if os.path.exists(config.logging_dir):
-        ckpt_list = glob.glob(os.path.join(config.logging_dir, "**/*.ckpt"), recursive=True)
-        assert len(ckpt_list) == 1, f"Number of ckpt is not 1."
-        best_model_ckpt = ckpt_list[0]
-    else:
-        # getting the best model from the previous trainer
+
+        # getting the best model from the trainer
         best_model_ckpt = trainer.checkpoint_callback.best_model_path
     
     # final validation at the end of training
     log_info(logger, f"Loading the best model from {best_model_ckpt}")
     with trainer.init_module(empty_init=True):
-        if approach == "single-probabilistic":
-            model = LightningProbabilisticPLM.load_from_checkpoint(best_model_ckpt)
+        if approach == "basic":
+            model = LightningPLM.load_from_checkpoint(best_model_ckpt, config=config)
+        elif approach == "single-probabilistic":
+            model = LightningProbabilisticPLMSingle.load_from_checkpoint(best_model_ckpt)
         elif approach == "ensemble-probabilistic":
             model = LightningProbabilisticPLMEnsemble.load_from_checkpoint(best_model_ckpt)
         else:
-            model = LightningPLM.load_from_checkpoint(best_model_ckpt, config=config)
+            raise ValueError(f"Invalid approach: {approach}")
 
     # model.config.save_predictions_to_disk = True # save final predictions to disk
     trainer.validate(model=model, dataloaders=val_dl)
@@ -139,6 +143,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--debug", action="store_true", help="Debug mode")
     parser.add_argument("-a", "--approach", type=str, default="ensemble-probabilistic", help="Approach: basic, single-probabilistic, ensemble-probabilistic")
+    parser.add_argument("-e", "--expt_name", type=str, default="", help="Experiment name")
 
     args = parser.parse_args()
 
@@ -147,6 +152,8 @@ if __name__ == "__main__":
     config_common = OmegaConf.load("config/config_common.yaml")
 
     config = OmegaConf.merge(config_common, config_train)
+
+    config.expt_name_postfix = args.expt_name
 
     config = prepare_train_config(config, approach=args.approach)
 

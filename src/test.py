@@ -6,7 +6,7 @@ from preprocess import DataModuleFromRaw
 import logging
 
 from utils import resolve_logging_dir, log_info, resolve_seed_wise_checkpoint, process_seedwise_metrics
-from model import LightningPLM, LightningProbabilisticPLM, LightningProbabilisticPLMEnsemble
+from model import LightningPLM, LightningProbabilisticPLMSingle, LightningProbabilisticPLMEnsemble
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def test_plm(config: OmegaConf, have_label: bool, delta: float, seed: int, appro
 
     with trainer.init_module(empty_init=True):
         if approach == "single-probabilistic":
-            model = LightningProbabilisticPLM.load_from_checkpoint(config.test_from_checkpoint)
+            model = LightningProbabilisticPLMSingle.load_from_checkpoint(config.test_from_checkpoint)
         elif approach == "ensemble-probabilistic":
             model = LightningProbabilisticPLMEnsemble.load_from_checkpoint(config.test_from_checkpoint)
         else:
