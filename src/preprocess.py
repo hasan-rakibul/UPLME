@@ -17,19 +17,26 @@ logger = logging.getLogger(__name__)
 pd.options.mode.copy_on_write = True # https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
 
 class DataModuleFromRaw:
-    def __init__(self, config, delta: float, seed: int):
+    def __init__(self, delta: float, seed: int, tokeniser_plm: str = "roberta-base"):
 
         self.delta = delta
         self.seed = seed
+
+        # keeping them constant for now, can make them arguments if required
         self.label_shift = 3.0
         self.noise_level = 0.2
         self.label_min = 1.0
         self.label_max = 7.0
-
-        self.config = config
+        self.label_column = "empathy"
+        self.llm_column = "llm_empathy"
+        self.feature_to_tokenise = ["essay"]
+        self.extra_columns_to_keep = [self.llm_column]
+        self.extra_columns_to_keep_train = []
+        self.max_length = 512
+        self.num_workers = 12
         
         self.tokeniser = AutoTokenizer.from_pretrained(
-                self.config.plm,
+                tokeniser_plm,
                 use_fast=True,
                 add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
         )
@@ -40,14 +47,14 @@ class DataModuleFromRaw:
         """
         Only keep the samples with the absolute difference between 'empathy' and 'llm_empathy' less than self.delta
         """
-        assert self.config.label_column in data.columns, f"{self.config.label_column} column not found in the data"
-        assert self.config.llm_column in data.columns, f"{self.config.llm_column} column not found in the data"
+        assert self.label_column in data.columns, f"{self.label_column} column not found in the data"
+        assert self.llm_column in data.columns, f"{self.llm_column} column not found in the data"
         # Calculate the absolute difference between 'empathy' and 'llm_empathy'
-        condition = np.abs(data[self.config.label_column] - data[self.config.llm_column]) < self.delta
+        condition = np.abs(data[self.label_column] - data[self.llm_column]) < self.delta
         data = data[condition]
-        data[self.config.label_column] = data[[self.config.label_column, self.config.llm_column]].mean(axis=1)
+        data[self.label_column] = data[[self.label_column, self.llm_column]].mean(axis=1)
 
-        data = data.drop(columns=[self.config.llm_column])
+        data = data.drop(columns=[self.llm_column])
 
         return data
     
@@ -60,7 +67,7 @@ class DataModuleFromRaw:
 
         label_middle = (self.label_max + self.label_min) / 2
         for idx in noisy_indices:
-            original_label = data.at[idx, self.config.label_column]
+            original_label = data.at[idx, self.label_column]
             if original_label > label_middle:
                 # high labels are flipped to lower labels
                 new_label = max(self.label_min, original_label - self.label_shift)
@@ -69,7 +76,7 @@ class DataModuleFromRaw:
                 # low labels are flipped to higher labels
                 new_label = min(self.label_max, original_label + self.label_shift)
                 noise_amount = new_label - original_label
-            data.at[idx, self.config.label_column] = new_label
+            data.at[idx, self.label_column] = new_label
             data.at[idx, "noise"] = noise_amount
 
         return data
@@ -82,8 +89,8 @@ class DataModuleFromRaw:
         log_info(logger, f"Read {len(data)} samples from {path}")
 
         # keep revent columns only
-        columns_to_keep = self.config.feature_to_tokenise + \
-            self.config.extra_columns_to_keep
+        columns_to_keep = self.feature_to_tokenise + \
+            self.extra_columns_to_keep
 
         # if it is val of 2022 and 2023, the labels are separate files
         val_goldstandard_file = None
@@ -99,14 +106,14 @@ class DataModuleFromRaw:
                 header=None # had no header in the file
             )
             # first column is empathy
-            goldstandard = goldstandard.rename(columns={0: self.config.label_column})
+            goldstandard = goldstandard.rename(columns={0: self.label_column})
             data = pd.concat([data, goldstandard], axis=1)
 
         if have_label:
-            columns_to_keep.append(self.config.label_column)
+            columns_to_keep.append(self.label_column)
         
         if mode == "train":
-            columns_to_keep.extend(self.config.extra_columns_to_keep_train) # this is a list
+            columns_to_keep.extend(self.extra_columns_to_keep_train) # this is a list
 
         selected_data = data[columns_to_keep]
 
@@ -128,18 +135,18 @@ class DataModuleFromRaw:
         return selected_data
 
     def _tokeniser_fn(self, sentence):
-        if len(self.config.feature_to_tokenise) == 1: # only one feature
+        if len(self.feature_to_tokenise) == 1: # only one feature
             return self.tokeniser(
-                sentence[self.config.feature_to_tokenise[0]],
+                sentence[self.feature_to_tokenise[0]],
                 truncation=True,
-                max_length=self.config.max_length
+                max_length=self.max_length
             )
         # otherwise tokenise a pair of sentence
         return self.tokeniser(
-            sentence[self.config.feature_to_tokenise[0]],
-            sentence[self.config.feature_to_tokenise[1]],
+            sentence[self.feature_to_tokenise[0]],
+            sentence[self.feature_to_tokenise[1]],
             truncation=True,
-            max_length=self.config.max_length
+            max_length=self.max_length
         )
 
     def get_hf_data(self, data_path_list, have_label, mode):
@@ -147,8 +154,6 @@ class DataModuleFromRaw:
         for data_path in data_path_list:
             data = self._raw_to_processed(data_path, have_label, mode)
             if 'all_data' in locals():
-                # log_info(logger, f"Taking {self.config.train_human_portion} portion of the data from {data_path}.\n")
-                # data = data.sample(frac=self.config.train_human_portion, random_state=self.seed)
                 all_data = pd.concat([all_data, data])
             else:
                 all_data = data
@@ -163,8 +168,8 @@ class DataModuleFromRaw:
         #     # add sample_id column
         #     all_data['sample_id'] = range(len(all_data))
 
-        if self.config.llm_column in all_data.columns:
-            all_data = all_data.drop(columns=[self.config.llm_column])   
+        if self.llm_column in all_data.columns:
+            all_data = all_data.drop(columns=[self.llm_column])   
 
         all_data_hf = Dataset.from_pandas(all_data, preserve_index=False) # convert to huggingface dataset
         
@@ -172,10 +177,10 @@ class DataModuleFromRaw:
         all_data_hf = all_data_hf.map(
             self._tokeniser_fn, 
             batched=True,
-            remove_columns=self.config.feature_to_tokenise
+            remove_columns=self.feature_to_tokenise
         )
         if have_label:
-            all_data_hf = all_data_hf.rename_column(self.config.label_column, 'labels')
+            all_data_hf = all_data_hf.rename_column(self.label_column, 'labels')
         all_data_hf.set_format('torch')
         
         return all_data_hf
@@ -197,18 +202,18 @@ class DataModuleFromRaw:
             batch_size=batch_size, 
             shuffle=shuffle,
             collate_fn=self.data_collator,
-            num_workers=self.config.num_workers,
+            num_workers=self.num_workers,
             pin_memory=torch.cuda.is_available(),
             worker_init_fn=self._seed_worker,
             generator=g
         )
-    def get_train_dl(self, data_path_list, batch_size):
+    def get_train_dl(self, data_path_list: list, batch_size: int):
         return self._get_dl(data_path_list, have_label=True, shuffle=True, mode="train", batch_size=batch_size)
     
-    def get_val_dl(self, data_path_list, batch_size):
+    def get_val_dl(self, data_path_list:list, batch_size: int):
         # depending on data_name, the labels can be in different file
         return self._get_dl(data_path_list, have_label=True, shuffle=False, mode="val", batch_size=batch_size)
     
-    def get_test_dl(self, data_path_list, batch_size=32, have_label=False):
+    def get_test_dl(self, data_path_list: list, batch_size: int = 32, have_label: bool = False):
         return self._get_dl(data_path_list, have_label=have_label, shuffle=False, mode="test", batch_size=batch_size) # we have labels in 2024 data
     

@@ -3,6 +3,7 @@ import argparse
 import logging
 import transformers
 import lightning as L
+from pytorch_lightning.loggers import WandbLogger
 from omegaconf import OmegaConf
 import glob
 import torch
@@ -18,9 +19,9 @@ def _train_validate_plm(
         config: OmegaConf, train_dl: torch.utils.data.DataLoader, 
         delta: float, seed: int, lr: float, approach: str, debug: bool,
         expt_name: str, logging_dir: str, loss_weights: list = None,
-        batch_size: int = None
+        batch_size: int = None, plm_names: list = None
     ) -> tuple:
-    datamodule = DataModuleFromRaw(config, delta=delta, seed=seed)
+    datamodule = DataModuleFromRaw(delta=delta, seed=seed)
     # if os.path.exists(config.logging_dir):
     #     log_info(logger, f"Seed-level logging directory already exists: {config.logging_dir}. So, validating on the saved ckpt...")
 
@@ -51,17 +52,18 @@ def _train_validate_plm(
         with trainer.init_module():
             # model created here directly goes to GPU
             if approach == "basic":
+                config.plm = plm_names[0]
                 model = LightningPLM(config, lr=lr)
             elif approach == "single-probabilistic":
                 model = LightningProbabilisticPLMSingle(
-                    plm_name=config.plm,
+                    plm_name=plm_names[0],
                     lr=lr,
                     num_training_steps=config.num_training_steps,
                     num_warmup_steps=config.num_warmup_steps
                 )
             elif approach == "ensemble-probabilistic":
                 model = LightningProbabilisticPLMEnsemble(
-                    plm_names=[config.plm, config.plm],
+                    plm_names=plm_names,
                     lr=lr,
                     num_training_steps=config.num_training_steps,
                     num_warmup_steps=config.num_warmup_steps,
@@ -100,6 +102,9 @@ def _train_validate_plm(
         "val_rmse": trainer.callback_metrics["val_rmse"].item()
     }
 
+    if isinstance(trainer.logger, WandbLogger):
+        trainer.logger.experiment.finish()
+
     return best_model_ckpt, metrics
 
 def _seeds_sweep(
@@ -107,7 +112,7 @@ def _seeds_sweep(
         train_dl: torch.utils.data.DataLoader, 
         delta: float, lr: float, test_have_label: bool,
         approach: str, debug: bool, expt_name: str, loss_weights: list = None,
-        batch_size: int = None
+        batch_size: int = None, plm_names: list = None
     ) -> None:
 
     parent_logging_dir = config.logging_dir
@@ -122,7 +127,7 @@ def _seeds_sweep(
         best_model_ckpt, metrics = _train_validate_plm(
             config, train_dl=train_dl, delta=delta, seed=seed, lr=lr,
             approach=approach, debug=debug, expt_name=expt_name, logging_dir=config.logging_dir,
-            loss_weights=loss_weights, batch_size=batch_size
+            loss_weights=loss_weights, batch_size=batch_size, plm_names=plm_names
         )
         
         if do_test:
@@ -144,6 +149,7 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--debug", action="store_true", help="Debug mode")
     parser.add_argument("-a", "--approach", type=str, default="ensemble-probabilistic", help="Approach: basic, single-probabilistic, ensemble-probabilistic")
     parser.add_argument("-e", "--expt_name", type=str, default="", help="Experiment name")
+    parser.add_argument("-o", "--overwrite_logging_dir", type=str, default=None, help="Overwrite logging directory")
 
     args = parser.parse_args()
 
@@ -169,10 +175,10 @@ if __name__ == "__main__":
         #     config.num_agents = 2
         #     log_info(logger, f"Debug mode is on. Using {config.num_agents} networks for agentic noise removal.")
 
-    if "overwrite_logging_dir" in config:
-        log_info(logger, f"Using overwrite_logging_dir {config.overwrite_logging_dir}")
+    if args.overwrite_logging_dir is not None:
+        log_info(logger, f"Using overwrite_logging_dir {args.overwrite_logging_dir}")
         log_info(logger, "MAKE SURE you DELETE the last directory manually which was not trained for all epochs.")
-        config.logging_dir = config.overwrite_logging_dir
+        config.logging_dir = args.overwrite_logging_dir
     else:
         config.logging_dir = resolve_logging_dir(config) # update customised logging_dir
 
@@ -203,5 +209,5 @@ if __name__ == "__main__":
                 config, do_test=config.do_test, train_dl=None, delta=config.delta, lr=lr,
                 test_have_label=config.test_have_label, approach=args.approach,
                 debug=args.debug, expt_name=config.expt_name,
-                loss_weights=config.loss_weights, batch_size=batch_size
+                loss_weights=config.loss_weights, batch_size=batch_size, plm_names=config.plm_names
             )

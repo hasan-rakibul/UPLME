@@ -87,7 +87,7 @@ def get_trainer(
     callbacks.extend(extra_callbacks) if extra_callbacks else None
 
     wandb_logger = WandbLogger(
-        name=expt_name,
+        name=f"{expt_name}_seed_{config.seed}",
         project="NoisEmpathy",
         save_dir=logging_dir
     )
@@ -198,8 +198,6 @@ def prepare_train_config(config: OmegaConf, approach: str) -> OmegaConf:
     if config.expt_name_postfix != "":
         config.expt_name += f"-{config.expt_name_postfix}"
 
-    config.extra_columns_to_keep = [config.llm_column]
-    config.extra_columns_to_keep_train = []
     train_attr = f"train_{config.llm}"
     val_attr = f"val_{config.llm}"
     test_attr = f"test_{config.llm}"

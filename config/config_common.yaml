@@ -1,14 +1,7 @@
 # common between train and test
-# seeds: [0, 42, 100, 999, 1234]
-seeds: [0]
-num_workers: 12
-plm: roberta-base
+seeds: [0, 42, 100, 999, 1234]
+plm_names: ["roberta-base", "cardiffnlp/twitter-roberta-base-sentiment-latest"]
 # plm: siebert/sentiment-roberta-large-english
-
-max_length: 512
-label_column: empathy
-llm_column: llm_empathy
-feature_to_tokenise: ["essay"]
 
 delta: 2.0
 

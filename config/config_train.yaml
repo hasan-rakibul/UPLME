@@ -6,9 +6,6 @@ val_data: 2024 # test would be same as val_data as in in-sample setting
 
 llm: llama # llama or gpt
 
-# overwrite_logging_dir: log/20250130_093518_ensemble-probabilistic_(2024,2022)-no-penalty-multi-seeds 
-# resume_train_from_checkpoint: 
-
 enable_early_stopping: True
 early_stopping_start_epoch: 5
 
@@ -22,7 +19,7 @@ num_epochs: 20
 lrs: [3.0e-5]
 batch_sizes: [16]
 
-loss_weights: [100.0, 0.0]
+loss_weights: [26.524063836995488, 0.0]
 
 logging_dir: ./log
 freeze_plm: False

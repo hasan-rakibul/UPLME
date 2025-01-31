@@ -27,7 +27,8 @@ def objective(
         expt_name: str,
         logging_dir: str,
         batch_size: int,
-        delta: float
+        delta: float,
+        plm_names: list
     ) -> float:
 
     # things to tune
@@ -38,7 +39,7 @@ def objective(
     
     L.seed_everything(seed)
 
-    datamodule = DataModuleFromRaw(config, delta=delta, seed=seed)
+    datamodule = DataModuleFromRaw(delta=delta, seed=seed)
     
     train_dl = datamodule.get_train_dl(data_path_list=config.train_file_list, batch_size=batch_size)
     val_dl = datamodule.get_val_dl(data_path_list=config.val_file_list, batch_size=batch_size)
@@ -65,7 +66,7 @@ def objective(
 
     with trainer.init_module():
         model = LightningProbabilisticPLMEnsemble(
-            plm_names=[config.plm, config.plm],
+            plm_names=plm_names,
             lr=lr,
             num_training_steps=num_training_steps,
             num_warmup_steps=num_warmup_steps,
@@ -94,7 +95,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--debug", action="store_true", help="Debug mode")
     parser.add_argument("-r", "--resume_dir", type=str, default=None, help="Resume from a previous optuna run")
-    parser.add_argument("-n", "--n_trails", type=int, default=100, help="Number of optuna trails")
+    parser.add_argument("-n", "--n_trials", type=int, default=100, help="Number of optuna trails")
+    parser.add_argument("-e", "--expt_name", type=str, default="tune", help="Experiment name")
 
     # variables could be passed as arguments but for now, we are hardcoding them
     approach = "ensemble-probabilistic"
@@ -111,6 +113,8 @@ if __name__ == "__main__":
     config_hparam = OmegaConf.load("config/config_train.yaml")
     config_common = OmegaConf.load("config/config_common.yaml")
     config = OmegaConf.merge(config_common, config_hparam)
+
+    config.expt_name_postfix = args.expt_name
     config = prepare_train_config(config, approach=approach)
 
     if args.resume_dir is not None:
@@ -155,9 +159,10 @@ if __name__ == "__main__":
         expt_name=config.expt_name,
         logging_dir=config.logging_dir,
         batch_size=config.batch_sizes[0],
-        delta=config.delta
+        delta=config.delta,
+        plm_names=config.plm_names
     )
-    study.optimize(objective_param, n_trials=args.n_trails, show_progress_bar=False)
+    study.optimize(objective_param, n_trials=args.n_trials, show_progress_bar=False)
 
     trial_results = study.trials_dataframe()
     trial_results.to_csv(os.path.join(config.logging_dir, "trials_results.csv"))

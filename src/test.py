@@ -14,7 +14,6 @@ def test_plm(config: OmegaConf, have_label: bool, delta: float, seed: int, appro
     assert os.path.exists(config.test_from_checkpoint), "valid test_from_checkpoint is required for test_mode"
     
     datamodule = DataModuleFromRaw(
-        config=config,
         delta=delta,
         seed=seed
     )
