@@ -37,12 +37,10 @@ class ProbabilisticPLM(torch.nn.Module):
         )
 
         x = output.last_hidden_state[:, 0, :]
-        
-        x = torch.nn.functional.relu(x)
 
-        unbounded_mean = self.fc_m(x)
+        unbounded_mean = self.fc_m(torch.nn.functional.dropout(x, p=0.25))
         scaled_mean = self.min_score + (self.max_score - self.min_score) * torch.nn.functional.sigmoid(unbounded_mean)
-
+        
         var = torch.nn.functional.softplus(self.fc_v(x)) # variance must be positive
 
         return scaled_mean.squeeze(), var.squeeze()
@@ -53,7 +51,7 @@ class LightningProbabilisticPLMSingle(L.LightningModule):
         plm_name: str,
         lr: float,
         num_training_steps: int,
-        num_warmup_steps: int,
+        num_warmup_steps: int
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -64,10 +62,8 @@ class LightningProbabilisticPLMSingle(L.LightningModule):
         self.num_training_steps = num_training_steps
         self.num_warmup_steps = num_warmup_steps
         
-        self.validation_step_means = []
-        self.validation_step_labels = []
-        self.test_step_outputs = []
-        self.test_step_labels = []
+        self.validation_outputs = []
+        self.test_outputs = []
 
     def forward(self, batch):
         return self.model(batch)
@@ -112,12 +108,15 @@ class LightningProbabilisticPLMSingle(L.LightningModule):
         mean, var = self(batch)
         _ = self.compute_and_log_loss(mean, var, batch["labels"], mode="val")
 
-        self.validation_step_means.append(mean)
-        self.validation_step_labels.append(batch["labels"])
+        self.validation_outputs.append({
+            "mean": mean,
+            "var": var,
+            "label": batch["labels"]
+        })
     
     def on_validation_epoch_end(self):
-        all_means = torch.cat(self.validation_step_means)
-        all_labels = torch.cat(self.validation_step_labels)
+        all_means = torch.cat([out["mean"] for out in self.validation_outputs])
+        all_labels = torch.cat([out["label"] for out in self.validation_outputs])
 
         all_means = all_means.to(torch.float64).cpu()
         all_labels = all_labels.to(torch.float64).cpu()
@@ -146,22 +145,29 @@ class LightningProbabilisticPLMSingle(L.LightningModule):
             sync_dist=True
         )
 
-        self.validation_step_means.clear()
-        self.validation_step_labels.clear()
+        self.validation_outputs.clear()
 
     def test_step(self, batch, batch_idx):
         mean, var = self(batch)
-        self.test_step_outputs.append(mean)
 
         if "labels" in batch:
-            self.test_step_labels.append(batch["labels"])
+            self.test_outputs.append({
+                "mean": mean,
+                "var": var,
+                "label": batch["labels"]
+            })
+        else:
+            self.test_outputs.append({
+                "mean": mean,
+                "var": var
+            })
 
     def on_test_epoch_end(self):
-        all_means = torch.cat(self.test_step_outputs)
+        all_means = torch.cat([out["mean"] for out in self.test_outputs])
         all_means = all_means.to(torch.float64).cpu()
 
-        if len(self.test_step_labels) > 0:
-            all_labels = torch.cat(self.test_step_labels)
+        if "label" in self.test_outputs[0]:
+            all_labels = torch.cat([out["label"] for out in self.test_outputs])
             all_labels = all_labels.to(torch.float64).cpu()
 
             self.log(
@@ -188,8 +194,7 @@ class LightningProbabilisticPLMSingle(L.LightningModule):
                 sync_dist=True
             )
 
-        self.test_step_outputs.clear()
-        self.test_step_labels.clear()
+        self.test_outputs.clear()
 
 class LightningProbabilisticPLMEnsemble(L.LightningModule):
     def __init__(

@@ -10,4 +10,5 @@
 
 export TOKENIZERS_PARALLELISM=false
 python src/run_plm.py \
--a "single-probabilistic"
+-a "ensemble-probabilistic" \
+-e "relu-removed"

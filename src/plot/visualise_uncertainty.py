@@ -1,5 +1,6 @@
 import logging
 import torch
+import argparse
 import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
 import numpy as np
@@ -14,9 +15,9 @@ logger = logging.getLogger(__name__)
 
 class VisualiseUncertainty:
     def __init__(self, model_path: str, data_path: list):
-        self.log_dir = "log"
         self.model_path = model_path
         self.data_path = data_path
+        self.log_dir = os.path.dirname(model_path)
 
     def retrieve_uncertainty_metrics(self):
         model = LightningProbabilisticPLMSingle.load_from_checkpoint(self.model_path)
@@ -38,7 +39,7 @@ class VisualiseUncertainty:
         model.eval()
         with torch.no_grad():
             for batch in dl:
-                batch = {k: v.to(self.device) for k, v in batch.items()}
+                batch = {k: v.to(device) for k, v in batch.items()}
                 mean, var = model(batch)
                 unc = torch.sqrt(var).cpu().numpy()
                 uncs.extend(unc)
@@ -93,7 +94,13 @@ class VisualiseUncertainty:
 
 
 if __name__ == "__main__":
-    model_path = "log/20250131_084832_single-probabilistic_(2024,2022)/lr_3e-05_bs_16/seed_1234/NoisEmpathy/7iqnkxpx/checkpoints/epoch=8-step=1188.ckpt"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-m", "--model_path", type=str, help="Path to the model checkpoint")
+    parser.add_argument("-l", "--load_npy", action="store_true", help="Load numpy files instead of recalculating")
+
+    args = parser.parse_args()
+
+    model_path = args.model_path
 
     constants = OmegaConf.load("config/config_common.yaml")
     data_path_numeric = [2024, 2022]
@@ -102,4 +109,4 @@ if __name__ == "__main__":
         data_path.append(getattr(constants[data], "train_llama"))
 
     vu = VisualiseUncertainty(model_path=model_path, data_path=data_path)
-    vu.plot_uncertainty(load_npy=True)
+    vu.plot_uncertainty(load_npy=args.load_npy)
