@@ -56,7 +56,9 @@ class LitProbabilisticPLMSingle(L.LightningModule):
         num_training_steps: int,
         num_warmup_steps: int,
         log_dir: str,
-        save_uc_metrics: bool
+        save_uc_metrics: bool,
+        error_decay_factor: float,
+        lambda_penalty: float
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -69,6 +71,9 @@ class LitProbabilisticPLMSingle(L.LightningModule):
         self.num_warmup_steps = num_warmup_steps
         self.log_dir = log_dir
         self.save_uc_metrics = save_uc_metrics
+
+        self.error_decay_factor = error_decay_factor
+        self.lambda_penalty = lambda_penalty
         
         self.validation_outputs = []
         self.test_outputs = []
@@ -100,12 +105,25 @@ class LitProbabilisticPLMSingle(L.LightningModule):
             }
         }
     
-    def compute_and_log_loss(self, mean, var, labels, mode):
+    def compute_and_log_loss(self, mean, var, labels, mode: str):
         nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
 
-        self.log(f"{mode}_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        errors = (mean - labels) ** 2
 
-        return nll_loss
+        # exponential decay weighting
+        # When error is small, weight ~ exp(-alpha*small) ~ 1; when error is large, weight decays
+        weight = torch.exp(-self.error_decay_factor * errors)
+
+        var = var * weight
+
+        penalty_loss = torch.linalg.norm(var, ord=2) / var.numel()
+        total_loss = nll_loss + self.lambda_penalty * penalty_loss
+
+        self.log(f"{mode}_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log(f"{mode}_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log(f"{mode}_total_loss", total_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+
+        return total_loss
     
     def training_step(self, batch, batch_idx):
         mean, var = self(batch)

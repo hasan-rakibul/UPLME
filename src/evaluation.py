@@ -114,8 +114,11 @@ class ModelEvaluator:
         #     np.save(f"{self.log_dir}/preds.npy", preds)
         #     np.save(f"{self.log_dir}/noise.npy", noise)
 
-        
-        outputs = np.load(os.path.join(self.log_dir, "output_unc.npy"), allow_pickle=True)
+
+        unc_file = glob.glob(os.path.join(self.log_dir, "**/*.npy"), recursive=True)
+        assert len(unc_file) == 1, f"Multiple or no npy files found in {self.log_dir}"
+        unc_file = unc_file[0]
+        outputs = np.load(unc_file, allow_pickle=True)
 
         var = outputs.item().get("var")
         uncs = np.sqrt(var)
@@ -161,7 +164,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    approach = "ensemble-prob"
+    approach = "single-prob"
     
     if args.run_scratch:
         model_path = glob.glob(os.path.join(args.log_dir, "**/*.ckpt"), recursive=True)

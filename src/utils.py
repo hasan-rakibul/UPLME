@@ -87,7 +87,7 @@ def get_trainer(
     callbacks.extend(extra_callbacks) if extra_callbacks else None
 
     wandb_logger = WandbLogger(
-        name=f"{expt_name}_seed_{config.seed}",
+        name=expt_name,
         project="NoisEmpathy",
         save_dir=logging_dir
     )

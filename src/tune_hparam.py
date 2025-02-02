@@ -13,7 +13,7 @@ import lightning as L
 
 from utils import log_info, log_debug, get_trainer, prepare_train_config, resolve_num_steps
 from preprocess import DataModuleFromRaw
-from model import LitProbabilisticPLMEnsemble
+from model import LitProbabilisticPLMSingle, LitProbabilisticPLMEnsemble
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +28,18 @@ def objective(
         logging_dir: str,
         batch_size: int,
         delta: float,
-        plm_names: list
+        plm_names: list,
+        approach: str
     ) -> float:
 
     # things to tune
-    consistency_weight = trial.suggest_float("consistency_weight", 0.0, 100.0)
+    # consistency_weight = trial.suggest_float("consistency_weight", 0.0, 100.0)
     # penalty_weight = trial.suggest_float("penalty_weight", 0.0, 100.0)
-    penalty_weight = 0.0
-    loss_weights = [consistency_weight, penalty_weight]
+    # penalty_weight = 0.0
+    # loss_weights = [consistency_weight, penalty_weight]
+
+    error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
+    lambda_penalty = trial.suggest_int("lambda_penalty", 0.0, 100)
     
     L.seed_everything(seed)
 
@@ -65,13 +69,28 @@ def objective(
     )
 
     with trainer.init_module():
-        model = LitProbabilisticPLMEnsemble(
-            plm_names=plm_names,
-            lr=lr,
-            num_training_steps=num_training_steps,
-            num_warmup_steps=num_warmup_steps,
-            loss_weights=loss_weights
-        )
+        if approach == "single-prob":
+            if len(plm_names) > 1:
+                # only the first plm is used for single-prob
+                plm_names = plm_names[:1]
+            model = LitProbabilisticPLMSingle(
+                plm_names=plm_names,
+                lr=lr,
+                num_training_steps=num_training_steps,
+                num_warmup_steps=num_warmup_steps,
+                log_dir=logging_dir,
+                save_uc_metrics=False,
+                error_decay_factor=error_decay_factor,
+                lambda_penalty=lambda_penalty
+            )
+        elif approach == "ensemble-prob":
+            model = LitProbabilisticPLMEnsemble(
+                plm_names=plm_names,
+                lr=lr,
+                num_training_steps=num_training_steps,
+                num_warmup_steps=num_warmup_steps,
+                loss_weights=loss_weights
+            )
 
     trainer.fit(model=model, train_dataloaders=train_dl, val_dataloaders=val_dl)
 
@@ -80,7 +99,10 @@ def objective(
 
     best_model_ckpt = trainer.checkpoint_callback.best_model_path
     with trainer.init_module(empty_init=True):
-        model = LitProbabilisticPLMEnsemble.load_from_checkpoint(best_model_ckpt)
+        if approach == "single-prob":
+            model = LitProbabilisticPLMSingle.load_from_checkpoint(best_model_ckpt)
+        elif approach == "ensemble-prob":
+            model = LitProbabilisticPLMEnsemble.load_from_checkpoint(best_model_ckpt)
     trainer.validate(model=model, dataloaders=val_dl)
 
     log_debug(logger, f"Best model validation score: {trainer.callback_metrics['val_pcc']}")
@@ -97,9 +119,9 @@ if __name__ == "__main__":
     parser.add_argument("-r", "--resume_dir", type=str, default=None, help="Resume from a previous optuna run")
     parser.add_argument("-n", "--n_trials", type=int, default=100, help="Number of optuna trails")
     parser.add_argument("-e", "--expt_name", type=str, default="tune", help="Experiment name")
+    parser.add_argument("-a", "--approach", type=str, default="single-prob", help="Approach to use")
 
     # variables could be passed as arguments but for now, we are hardcoding them
-    approach = "ensemble-probabilistic"
     objectives = ["val_ccc"]
     directions = ["maximize"]
     seed = 0
@@ -115,7 +137,7 @@ if __name__ == "__main__":
     config = OmegaConf.merge(config_common, config_hparam)
 
     config.expt_name_postfix = args.expt_name
-    config = prepare_train_config(config, approach=approach)
+    config = prepare_train_config(config, approach=args.approach)
 
     if args.resume_dir is not None:
         storage = f"sqlite:///{args.resume_dir}/optuna.db"
@@ -126,7 +148,8 @@ if __name__ == "__main__":
             logger.setLevel(logging.DEBUG)
             config.logging_dir = "/tmp"
             log_info(logger, f"Running in debug mode. Logging to {config.logging_dir}")
-            args.n_trials = 1
+            args.n_trials = 2
+            config.num_epochs = 2
 
         config.logging_dir=os.path.join(
             config.logging_dir, 
@@ -160,7 +183,8 @@ if __name__ == "__main__":
         logging_dir=config.logging_dir,
         batch_size=config.batch_sizes[0],
         delta=config.delta,
-        plm_names=config.plm_names
+        plm_names=config.plm_names,
+        approach=args.approach
     )
     study.optimize(objective_param, n_trials=args.n_trials, show_progress_bar=False)
 

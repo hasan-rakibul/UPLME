@@ -11,7 +11,6 @@ import torch
 from utils import log_info, resolve_logging_dir, process_seedwise_metrics, prepare_train_config, get_trainer, resolve_num_steps
 from model import LitBasicPLM, LitProbabilisticPLMSingle, LitProbabilisticPLMEnsemble
 from preprocess import DataModuleFromRaw
-from test import test_plm
 from evaluation import ModelEvaluator
 
 logger = logging.getLogger(__name__)
@@ -65,7 +64,9 @@ def _train_validate_plm(
                     num_training_steps=config.num_training_steps,
                     num_warmup_steps=config.num_warmup_steps,
                     log_dir=logging_dir,
-                    save_uc_metrics=False
+                    save_uc_metrics=False,
+                    error_decay_factor=0.5,
+                    lambda_penalty=87
                 )
             elif approach == "ensemble-prob":
                 model = LitProbabilisticPLMEnsemble(
@@ -151,11 +152,6 @@ def _seeds_sweep(
             # subsequent testing
             log_info(logger, f"Testing right after training from {best_model_ckpt}")
             test_metrics = evaluator.test(best_model_ckpt)
-
-            # config.test_from_checkpoint = best_model_ckpt
-            # config.logging_dir = resolve_logging_dir(config)
-            # test_metrics = test_plm(config, have_label=test_have_label, delta=delta, seed=seed, approach=approach)
-            
             metrics = {**metrics, **test_metrics} # merge the two dictionaries 
 
         metrics["seed"] = seed
@@ -167,7 +163,7 @@ def _seeds_sweep(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--debug", action="store_true", help="Debug mode")
-    parser.add_argument("-a", "--approach", type=str, default="ensemble-prob", help="Approach: basic, single-prob, ensemble-prob")
+    parser.add_argument("-a", "--approach", type=str, default="single-prob", help="Approach: basic, single-prob, ensemble-prob")
     parser.add_argument("-e", "--expt_name", type=str, default="", help="Experiment name")
     parser.add_argument("-o", "--overwrite_logging_dir", type=str, default=None, help="Overwrite logging directory")
 
