@@ -9,9 +9,10 @@ import glob
 import torch
 
 from utils import log_info, resolve_logging_dir, process_seedwise_metrics, prepare_train_config, get_trainer, resolve_num_steps
-from model import LightningPLM, LightningProbabilisticPLMSingle, LightningProbabilisticPLMEnsemble
+from model import LitBasicPLM, LitProbabilisticPLMSingle, LitProbabilisticPLMEnsemble
 from preprocess import DataModuleFromRaw
 from test import test_plm
+from evaluation import ModelEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -53,21 +54,28 @@ def _train_validate_plm(
             # model created here directly goes to GPU
             if approach == "basic":
                 config.plm = plm_names[0]
-                model = LightningPLM(config, lr=lr)
-            elif approach == "single-probabilistic":
-                model = LightningProbabilisticPLMSingle(
-                    plm_name=plm_names[0],
-                    lr=lr,
-                    num_training_steps=config.num_training_steps,
-                    num_warmup_steps=config.num_warmup_steps
-                )
-            elif approach == "ensemble-probabilistic":
-                model = LightningProbabilisticPLMEnsemble(
+                model = LitBasicPLM(config, lr=lr)
+            elif approach == "single-prob":
+                if len(plm_names) > 1:
+                    # only the first plm is used for single-prob
+                    plm_names = plm_names[:1]
+                model = LitProbabilisticPLMSingle(
                     plm_names=plm_names,
                     lr=lr,
                     num_training_steps=config.num_training_steps,
                     num_warmup_steps=config.num_warmup_steps,
-                    loss_weights=loss_weights
+                    log_dir=logging_dir,
+                    save_uc_metrics=False
+                )
+            elif approach == "ensemble-prob":
+                model = LitProbabilisticPLMEnsemble(
+                    plm_names=plm_names,
+                    lr=lr,
+                    num_training_steps=config.num_training_steps,
+                    num_warmup_steps=config.num_warmup_steps,
+                    loss_weights=loss_weights,
+                    log_dir=logging_dir,
+                    save_uc_metrics=False
                 )
             else:
                 raise ValueError(f"Invalid approach: {approach}")
@@ -85,11 +93,11 @@ def _train_validate_plm(
     log_info(logger, f"Loading the best model from {best_model_ckpt}")
     with trainer.init_module(empty_init=True):
         if approach == "basic":
-            model = LightningPLM.load_from_checkpoint(best_model_ckpt, config=config)
-        elif approach == "single-probabilistic":
-            model = LightningProbabilisticPLMSingle.load_from_checkpoint(best_model_ckpt)
-        elif approach == "ensemble-probabilistic":
-            model = LightningProbabilisticPLMEnsemble.load_from_checkpoint(best_model_ckpt)
+            model = LitBasicPLM.load_from_checkpoint(best_model_ckpt, config=config)
+        elif approach == "single-prob":
+            model = LitProbabilisticPLMSingle.load_from_checkpoint(best_model_ckpt)
+        elif approach == "ensemble-prob":
+            model = LitProbabilisticPLMEnsemble.load_from_checkpoint(best_model_ckpt)
         else:
             raise ValueError(f"Invalid approach: {approach}")
 
@@ -116,6 +124,15 @@ def _seeds_sweep(
     ) -> None:
 
     parent_logging_dir = config.logging_dir
+
+    # in the following class, there is seed, but eval should not be dependent on seed
+    evaluator = ModelEvaluator(
+        log_dir=parent_logging_dir,
+        data_path=config.test_file_list,
+        approach=approach,
+        delta=delta
+    )
+
     results = []
     for seed in config.seeds:
         config.seed = seed
@@ -133,9 +150,12 @@ def _seeds_sweep(
         if do_test:
             # subsequent testing
             log_info(logger, f"Testing right after training from {best_model_ckpt}")
-            config.test_from_checkpoint = best_model_ckpt
-            config.logging_dir = resolve_logging_dir(config)
-            test_metrics = test_plm(config, have_label=test_have_label, delta=delta, seed=seed, approach=approach)
+            test_metrics = evaluator.test(best_model_ckpt)
+
+            # config.test_from_checkpoint = best_model_ckpt
+            # config.logging_dir = resolve_logging_dir(config)
+            # test_metrics = test_plm(config, have_label=test_have_label, delta=delta, seed=seed, approach=approach)
+            
             metrics = {**metrics, **test_metrics} # merge the two dictionaries 
 
         metrics["seed"] = seed
@@ -147,7 +167,7 @@ def _seeds_sweep(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--debug", action="store_true", help="Debug mode")
-    parser.add_argument("-a", "--approach", type=str, default="ensemble-probabilistic", help="Approach: basic, single-probabilistic, ensemble-probabilistic")
+    parser.add_argument("-a", "--approach", type=str, default="ensemble-prob", help="Approach: basic, single-prob, ensemble-prob")
     parser.add_argument("-e", "--expt_name", type=str, default="", help="Experiment name")
     parser.add_argument("-o", "--overwrite_logging_dir", type=str, default=None, help="Overwrite logging directory")
 
@@ -171,7 +191,7 @@ if __name__ == "__main__":
         log_info(logger, f"Debug mode is on. Using {config.logging_dir} for storing log files.")
         config.num_epochs = 2
         
-        # if args.approach == "ensemble-probabilistic":
+        # if args.approach == "ensemble-prob":
         #     config.num_agents = 2
         #     log_info(logger, f"Debug mode is on. Using {config.num_agents} networks for agentic noise removal.")
 

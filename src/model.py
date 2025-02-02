@@ -1,12 +1,15 @@
-from transformers import AutoModel, AutoModelForSequenceClassification, get_linear_schedule_with_warmup, get_polynomial_decay_schedule_with_warmup
 import torch
-from torch import Tensor
 import torch.nn.functional as F
 import lightning as L
+from transformers import (
+    AutoModel, AutoModelForSequenceClassification, 
+    get_linear_schedule_with_warmup, get_polynomial_decay_schedule_with_warmup
+)
 from lightning.pytorch.utilities import rank_zero_only
 from torchmetrics.functional import pearson_corrcoef, concordance_corrcoef, mean_squared_error
 import os
 import logging
+import numpy as np
 import pandas as pd
 import zipfile
 from omegaconf import OmegaConf
@@ -45,22 +48,27 @@ class ProbabilisticPLM(torch.nn.Module):
 
         return scaled_mean.squeeze(), var.squeeze()
 
-class LightningProbabilisticPLMSingle(L.LightningModule):
+class LitProbabilisticPLMSingle(L.LightningModule):
     def __init__(
         self,
-        plm_name: str,
+        plm_names: list[str],
         lr: float,
         num_training_steps: int,
-        num_warmup_steps: int
+        num_warmup_steps: int,
+        log_dir: str,
+        save_uc_metrics: bool
     ):
         super().__init__()
         self.save_hyperparameters()
 
-        self.model = ProbabilisticPLM(plm_name=plm_name, lr=lr) 
+        if len(plm_names) == 1:
+            self.model = ProbabilisticPLM(plm_name=plm_names[0], lr=lr)
 
         self.lr = lr
         self.num_training_steps = num_training_steps
         self.num_warmup_steps = num_warmup_steps
+        self.log_dir = log_dir
+        self.save_uc_metrics = save_uc_metrics
         
         self.validation_outputs = []
         self.test_outputs = []
@@ -111,12 +119,12 @@ class LightningProbabilisticPLMSingle(L.LightningModule):
         self.validation_outputs.append({
             "mean": mean,
             "var": var,
-            "label": batch["labels"]
+            "labels": batch["labels"]
         })
     
     def on_validation_epoch_end(self):
         all_means = torch.cat([out["mean"] for out in self.validation_outputs])
-        all_labels = torch.cat([out["label"] for out in self.validation_outputs])
+        all_labels = torch.cat([out["labels"] for out in self.validation_outputs])
 
         all_means = all_means.to(torch.float64).cpu()
         all_labels = all_labels.to(torch.float64).cpu()
@@ -147,27 +155,42 @@ class LightningProbabilisticPLMSingle(L.LightningModule):
 
         self.validation_outputs.clear()
 
+    def _save_npy(self, output: list[dict], save_str: str = "unc"):
+        # convert tensors to numpy arrays
+        output_dict = {}
+        for out in output:
+            for key in out:
+                array = out[key].cpu().numpy()
+                if key in output_dict:
+                    output_dict[key] = np.concatenate((output_dict[key], array), axis=0)
+                else:
+                    output_dict[key] = array
+        
+        np.save(f"{self.log_dir}/output_{save_str}.npy", output_dict)
+        log_info(logger, f"Saved output to {self.log_dir}/output_{save_str}.npy")
+
     def test_step(self, batch, batch_idx):
         mean, var = self(batch)
+        
+        outputs = {
+            "mean": mean,
+            "var": var
+        }
 
         if "labels" in batch:
-            self.test_outputs.append({
-                "mean": mean,
-                "var": var,
-                "label": batch["labels"]
-            })
-        else:
-            self.test_outputs.append({
-                "mean": mean,
-                "var": var
-            })
+            outputs["labels"] = batch["labels"]
+        
+        if "noise" in batch:
+            outputs["noise"] = batch["noise"]
+
+        self.test_outputs.append(outputs)
 
     def on_test_epoch_end(self):
         all_means = torch.cat([out["mean"] for out in self.test_outputs])
         all_means = all_means.to(torch.float64).cpu()
 
-        if "label" in self.test_outputs[0]:
-            all_labels = torch.cat([out["label"] for out in self.test_outputs])
+        if "labels" in self.test_outputs[0]:
+            all_labels = torch.cat([out["labels"] for out in self.test_outputs])
             all_labels = all_labels.to(torch.float64).cpu()
 
             self.log(
@@ -194,27 +217,36 @@ class LightningProbabilisticPLMSingle(L.LightningModule):
                 sync_dist=True
             )
 
+        if self.save_uc_metrics:
+            self._save_npy(self.test_outputs)
+
         self.test_outputs.clear()
 
-class LightningProbabilisticPLMEnsemble(L.LightningModule):
+class LitProbabilisticPLMEnsemble(LitProbabilisticPLMSingle):
     def __init__(
         self,
         plm_names: list[str],
         lr: float,
         num_training_steps: int,
         num_warmup_steps: int,
-        loss_weights: list[float]
+        loss_weights: list[float],
+        log_dir: str,
+        save_uc_metrics: bool
     ):
-        super().__init__()
+        super().__init__(
+            plm_names=plm_names,
+            lr=lr,
+            num_training_steps=num_training_steps,
+            num_warmup_steps=num_warmup_steps,
+            log_dir=log_dir,
+            save_uc_metrics=save_uc_metrics
+        )
+
         self.save_hyperparameters()
 
-        self.models = torch.nn.ModuleList([
+        self.model = torch.nn.ModuleList([
             ProbabilisticPLM(plm_name=plm, lr=lr) for plm in plm_names
         ])
-
-        self.lr = lr
-        self.num_training_steps = num_training_steps
-        self.num_warmup_steps = num_warmup_steps
         
         self.loss_weights = loss_weights
         assert len(self.loss_weights) == 2, "Check if the number of loss weights is correct"
@@ -224,14 +256,11 @@ class LightningProbabilisticPLMEnsemble(L.LightningModule):
             requires_grad=True
         )
 
-        self.validation_outputs = []
-        self.test_outputs = []
-
     def forward(self, batch):
         means = []
         variances = []
-        for model in self.models:
-            mean, var = model(batch)
+        for sub_model in self.model:
+            mean, var = sub_model(batch)
             means.append(mean)
             variances.append(var)
         means_tensor = torch.stack(means) # (num_models, batch_size)
@@ -282,30 +311,6 @@ class LightningProbabilisticPLMEnsemble(L.LightningModule):
 
         return total_loss
     
-    def configure_optimizers(self):
-        optimiser = torch.optim.AdamW(
-            params=self.parameters(),
-            lr=self.lr,
-            betas=(0.0, 0.98),
-            eps=1e-6,
-            weight_decay=0.1
-        )
-
-        lr_scheduler = get_linear_schedule_with_warmup(
-            optimiser,
-            num_warmup_steps=self.num_warmup_steps,
-            num_training_steps=self.num_training_steps
-        )
-        
-        return {
-            "optimizer": optimiser,
-            "lr_scheduler": {
-                "scheduler": lr_scheduler,
-                "monitor": "val_loss",
-                "frequency": 1
-            }
-        }
-    
     def training_step(self, batch, batch_idx):
         ensemble_mean, ensemble_var, indiv_var = self(batch)
         loss = self.compute_and_log_loss(ensemble_mean, ensemble_var, batch["labels"], indiv_var, mode="train")
@@ -318,93 +323,27 @@ class LightningProbabilisticPLMEnsemble(L.LightningModule):
         self.validation_outputs.append({
             "mean": ensemble_mean,
             "var": ensemble_var,
-            "label": batch["labels"]
+            "labels": batch["labels"]
         })
-
-    def on_validation_epoch_end(self):
-        all_means = torch.cat([out["mean"] for out in self.validation_outputs])
-        all_labels = torch.cat([out["label"] for out in self.validation_outputs])
-
-        all_means = all_means.to(torch.float64).cpu()
-        all_labels = all_labels.to(torch.float64).cpu()
-
-        self.log(
-            "val_pcc",
-            pearson_corrcoef(all_means, all_labels),
-            logger=True,
-            prog_bar=False,
-            sync_dist=True
-        )
-
-        self.log(
-            "val_ccc",
-            concordance_corrcoef(all_means, all_labels),
-            logger=True,
-            prog_bar=True,
-            sync_dist=True
-        )
-
-        self.log(
-            "val_rmse",
-            mean_squared_error(all_means, all_labels, squared=False),
-            logger=True,
-            prog_bar=False,
-            sync_dist=True
-        )
-
-        self.validation_outputs.clear()
 
     def test_step(self, batch, batch_idx):
         ensemble_mean, ensemble_var, _ = self(batch)
 
+        outputs = {
+            "mean": ensemble_mean,
+            "var": ensemble_var
+        }
+
         if "labels" in batch:
-            self.test_outputs.append({
-                "mean": ensemble_mean,
-                "var": ensemble_var,
-                "label": batch["labels"]
-            })
-        else:
-            self.test_outputs.append({
-                "mean": ensemble_mean,
-                "var": ensemble_var
-            })
+            outputs["labels"] = batch["labels"]
+        
+        if "noise" in batch:
+            outputs["noise"] = batch["noise"]
 
-    def on_test_epoch_end(self):
-        all_means = torch.cat([out["mean"] for out in self.test_outputs])
-        all_means = all_means.to(torch.float64).cpu()
-
-        if "label" in self.test_outputs[0]:
-            all_labels = torch.cat([out["label"] for out in self.test_outputs])
-            all_labels = all_labels.to(torch.float64).cpu()
-
-            self.log(
-                "test_pcc",
-                pearson_corrcoef(all_means, all_labels),
-                logger=False,
-                prog_bar=True,
-                sync_dist=True
-            )
-
-            self.log(
-                "test_ccc",
-                concordance_corrcoef(all_means, all_labels),
-                logger=False,
-                prog_bar=True,
-                sync_dist=True
-            )
-
-            self.log(
-                "test_rmse",
-                mean_squared_error(all_means, all_labels, squared=False),
-                logger=False,
-                prog_bar=True,
-                sync_dist=True
-            )
-
-        self.test_outputs.clear()
+        self.test_outputs.append(outputs)
         
 
-class LightningPLM(L.LightningModule):
+class LitBasicPLM(L.LightningModule):
     def __init__(self, config: OmegaConf, lr: float):
         super().__init__()
         self.save_hyperparameters()

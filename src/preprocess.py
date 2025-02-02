@@ -82,7 +82,7 @@ class DataModuleFromRaw:
         return data
         
     
-    def _raw_to_processed(self, path: str, have_label: bool, mode: str) -> pd.DataFrame:
+    def _raw_to_processed(self, path: str, have_label: bool, mode: str, add_noise: bool) -> pd.DataFrame:
         log_info(logger, f"\nReading data from {path}")
         data = read_file(path)
         
@@ -120,7 +120,7 @@ class DataModuleFromRaw:
         # if have_label and (mode == "val" or mode == "test"):
         log_info(logger, f"Santitising labels of {path} file.\n")
         selected_data = self._label_fix(selected_data)
-        if mode == "train":
+        if add_noise:
             log_info(logger, f"Flipping labels of {path} file.\n")
             selected_data = self._flip_labels(selected_data)
         
@@ -149,10 +149,10 @@ class DataModuleFromRaw:
             max_length=self.max_length
         )
 
-    def get_hf_data(self, data_path_list, have_label, mode):
+    def get_hf_data(self, data_path_list, have_label, mode, add_noise):
         # we may combine the data from different versions
         for data_path in data_path_list:
-            data = self._raw_to_processed(data_path, have_label, mode)
+            data = self._raw_to_processed(data_path, have_label, mode, add_noise)
             if 'all_data' in locals():
                 all_data = pd.concat([all_data, data])
             else:
@@ -191,12 +191,12 @@ class DataModuleFromRaw:
         np.random.seed(worker_seed)
         random.seed(worker_seed) 
     
-    def _get_dl(self, data_path_list, have_label, shuffle, mode, batch_size):
+    def _get_dl(self, data_path_list, have_label, shuffle, mode, batch_size, add_noise: bool):
         # making sure the shuffling is reproducible
         g = torch.Generator()
         g.manual_seed(self.seed)
 
-        hf_data = self.get_hf_data(data_path_list=data_path_list, have_label=have_label, mode=mode)
+        hf_data = self.get_hf_data(data_path_list=data_path_list, have_label=have_label, mode=mode, add_noise=add_noise)
         return DataLoader(
             hf_data,
             batch_size=batch_size, 
@@ -208,12 +208,12 @@ class DataModuleFromRaw:
             generator=g
         )
     def get_train_dl(self, data_path_list: list, batch_size: int):
-        return self._get_dl(data_path_list, have_label=True, shuffle=True, mode="train", batch_size=batch_size)
+        return self._get_dl(data_path_list, have_label=True, shuffle=True, mode="train", batch_size=batch_size, add_noise=True)
     
     def get_val_dl(self, data_path_list:list, batch_size: int):
         # depending on data_name, the labels can be in different file
-        return self._get_dl(data_path_list, have_label=True, shuffle=False, mode="val", batch_size=batch_size)
+        return self._get_dl(data_path_list, have_label=True, shuffle=False, mode="val", batch_size=batch_size, add_noise=False)
     
-    def get_test_dl(self, data_path_list: list, batch_size: int = 32, have_label: bool = False):
-        return self._get_dl(data_path_list, have_label=have_label, shuffle=False, mode="test", batch_size=batch_size) # we have labels in 2024 data
+    def get_test_dl(self, data_path_list: list, batch_size: int = 32, have_label: bool = False, add_noise: bool = False):
+        return self._get_dl(data_path_list, have_label=have_label, shuffle=False, mode="test", batch_size=batch_size, add_noise=add_noise) # we have labels in 2024 data
     

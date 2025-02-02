@@ -13,7 +13,7 @@ import lightning as L
 
 from utils import log_info, log_debug, get_trainer, prepare_train_config, resolve_num_steps
 from preprocess import DataModuleFromRaw
-from model import LightningProbabilisticPLMEnsemble
+from model import LitProbabilisticPLMEnsemble
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def objective(
     )
 
     with trainer.init_module():
-        model = LightningProbabilisticPLMEnsemble(
+        model = LitProbabilisticPLMEnsemble(
             plm_names=plm_names,
             lr=lr,
             num_training_steps=num_training_steps,
@@ -80,7 +80,7 @@ def objective(
 
     best_model_ckpt = trainer.checkpoint_callback.best_model_path
     with trainer.init_module(empty_init=True):
-        model = LightningProbabilisticPLMEnsemble.load_from_checkpoint(best_model_ckpt)
+        model = LitProbabilisticPLMEnsemble.load_from_checkpoint(best_model_ckpt)
     trainer.validate(model=model, dataloaders=val_dl)
 
     log_debug(logger, f"Best model validation score: {trainer.callback_metrics['val_pcc']}")
