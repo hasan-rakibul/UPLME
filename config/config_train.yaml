@@ -19,7 +19,7 @@ num_epochs: 20
 lrs: [3.0e-5]
 batch_sizes: [16]
 
-loss_weights: [26.524063836995488, 0.0]
+loss_weights: [50, 25]
 
 logging_dir: ./log
 freeze_plm: False

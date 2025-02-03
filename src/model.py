@@ -58,7 +58,7 @@ class LitProbabilisticPLMSingle(L.LightningModule):
         log_dir: str,
         save_uc_metrics: bool,
         error_decay_factor: float,
-        lambda_penalty: float
+        loss_weights: list[float] 
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -73,7 +73,7 @@ class LitProbabilisticPLMSingle(L.LightningModule):
         self.save_uc_metrics = save_uc_metrics
 
         self.error_decay_factor = error_decay_factor
-        self.lambda_penalty = lambda_penalty
+        self.loss_weights = loss_weights
         
         self.validation_outputs = []
         self.test_outputs = []
@@ -105,9 +105,7 @@ class LitProbabilisticPLMSingle(L.LightningModule):
             }
         }
     
-    def compute_and_log_loss(self, mean, var, labels, mode: str):
-        nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
-
+    def _compute_penalty_loss(self, mean, var, labels) -> torch.Tensor:
         errors = (mean - labels) ** 2
 
         # exponential decay weighting
@@ -117,9 +115,17 @@ class LitProbabilisticPLMSingle(L.LightningModule):
         var = var * weight
 
         penalty_loss = torch.linalg.norm(var, ord=2) / var.numel()
-        total_loss = nll_loss + self.lambda_penalty * penalty_loss
 
-        self.log(f"{mode}_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        return self.loss_weights[0] * penalty_loss
+    
+    def compute_and_log_loss(self, mean, var, labels, mode: str):
+        nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
+
+        penalty_loss = self._compute_penalty_loss(mean=mean, var=var, labels=labels)
+        
+        total_loss = nll_loss + penalty_loss
+
+        self.log(f"{mode}_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
         self.log(f"{mode}_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
         self.log(f"{mode}_total_loss", total_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
@@ -249,7 +255,8 @@ class LitProbabilisticPLMEnsemble(LitProbabilisticPLMSingle):
         num_warmup_steps: int,
         loss_weights: list[float],
         log_dir: str,
-        save_uc_metrics: bool
+        save_uc_metrics: bool,
+        error_decay_factor: float
     ):
         super().__init__(
             plm_names=plm_names,
@@ -257,7 +264,9 @@ class LitProbabilisticPLMEnsemble(LitProbabilisticPLMSingle):
             num_training_steps=num_training_steps,
             num_warmup_steps=num_warmup_steps,
             log_dir=log_dir,
-            save_uc_metrics=save_uc_metrics
+            save_uc_metrics=save_uc_metrics,
+            error_decay_factor=error_decay_factor,
+            loss_weights=loss_weights
         )
 
         self.save_hyperparameters()
@@ -290,10 +299,12 @@ class LitProbabilisticPLMEnsemble(LitProbabilisticPLMSingle):
         ensemble_mean = torch.sum(means_tensor * weights.unsqueeze(-1), dim=0) # (batch_size,)
         ensemble_var = torch.sum(variances_tensor * (weights.unsqueeze(-1)**2), dim=0)
 
-        return ensemble_mean, ensemble_var, variances_tensor
+        return ensemble_mean.squeeze(), ensemble_var.squeeze(), variances_tensor.squeeze()
     
-    def compute_and_log_loss(self, ensemble_mean, ensemble_var, labels, variances, mode):
-        nll_loss = F.gaussian_nll_loss(ensemble_mean.squeeze(), labels.squeeze(), ensemble_var.squeeze())
+    def compute_and_log_loss(self, ensemble_mean, ensemble_var, labels, variances, mode: str):
+        nll_loss = F.gaussian_nll_loss(ensemble_mean, labels, ensemble_var)
+
+        penalty_loss = self._compute_penalty_loss(mean=ensemble_mean, var=ensemble_var, labels=labels)
 
         # simple consistency of ensemble_var
         # z = torch.log(ensemble_var)
@@ -307,25 +318,28 @@ class LitProbabilisticPLMEnsemble(LitProbabilisticPLMSingle):
                 consistency_loss = torch.mean((torch.log(variances[i]) - torch.log(variances[j]))**2)
                 consistency_losses.append(consistency_loss)
 
-        consistency_loss = self.loss_weights[0] * torch.mean(torch.stack(consistency_losses))
+        consistency_loss = self.loss_weights[1] * torch.mean(torch.stack(consistency_losses))
 
         # simple L2 penalty
         # variance_penalty_loss = self.penalty_weight * torch.norm(ensemble_var, p=2)
 
         # model-level variance penalty
-        variance_penalty_losses = []
-        for var in variances:
-            variance_penalty_loss = torch.norm(var, p=2)
-            variance_penalty_losses.append(variance_penalty_loss)
+        # variance_penalty_losses = []
+        # for var in variances:
+        #     variance_penalty_loss = torch.norm(var, p=2)
+        #     variance_penalty_losses.append(variance_penalty_loss)
 
-        variance_penalty_loss = self.loss_weights[1] * torch.mean(torch.stack(variance_penalty_losses))
+        # variance_penalty_loss = self.loss_weights[1] * torch.mean(torch.stack(variance_penalty_losses))
 
-        total_loss = nll_loss + consistency_loss + variance_penalty_loss
+        # total_loss = nll_loss + consistency_loss + variance_penalty_loss
+
+        total_loss = nll_loss + penalty_loss + consistency_loss
 
         self.log(f"{mode}_loss", total_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
         self.log(f"{mode}_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log(f"{mode}_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
         self.log(f"{mode}_consistency_loss", consistency_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        self.log(f"{mode}_penalty_loss", variance_penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        # self.log(f"{mode}_penalty_loss", variance_penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
         return total_loss
     

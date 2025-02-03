@@ -18,19 +18,24 @@ logger = logging.getLogger(__name__)
 def _train_validate_plm(
         config: OmegaConf, train_dl: torch.utils.data.DataLoader, 
         delta: float, seed: int, lr: float, approach: str, debug: bool,
-        expt_name: str, logging_dir: str, loss_weights: list = None,
-        batch_size: int = None, plm_names: list = None
+        expt_name: str, logging_dir: str, loss_weights: list[float] | None = None,
+        batch_size: int | None = None, plm_names: list[str] | None = None
     ) -> tuple:
     datamodule = DataModuleFromRaw(delta=delta, seed=seed)
     # if os.path.exists(config.logging_dir):
     #     log_info(logger, f"Seed-level logging directory already exists: {config.logging_dir}. So, validating on the saved ckpt...")
 
     if train_dl is None:
-        train_dl = datamodule.get_train_dl(data_path_list=config.train_file_list, batch_size=batch_size)
+        train_dl = datamodule.get_train_dl(
+            data_path_list=config.train_file_list, batch_size=batch_size,
+            sanitise_labels=False, add_noise=False)
     else:
         log_info(logger, "Training data loader is provided. So, skipping the training data loader creation.")
     
-    val_dl = datamodule.get_val_dl(data_path_list=config.val_file_list, batch_size=batch_size)
+    val_dl = datamodule.get_val_dl(
+        data_path_list=config.val_file_list, batch_size=batch_size,
+        sanitise_labels=False, add_noise=False
+    )
 
     trainer = get_trainer(
         config, enable_early_stopping=config.enable_early_stopping, debug=debug,
@@ -66,7 +71,7 @@ def _train_validate_plm(
                     log_dir=logging_dir,
                     save_uc_metrics=False,
                     error_decay_factor=0.5,
-                    lambda_penalty=87
+                    loss_weights=87
                 )
             elif approach == "ensemble-prob":
                 model = LitProbabilisticPLMEnsemble(
@@ -76,7 +81,8 @@ def _train_validate_plm(
                     num_warmup_steps=config.num_warmup_steps,
                     loss_weights=loss_weights,
                     log_dir=logging_dir,
-                    save_uc_metrics=False
+                    save_uc_metrics=False,
+                    error_decay_factor=1.0
                 )
             else:
                 raise ValueError(f"Invalid approach: {approach}")
@@ -131,7 +137,9 @@ def _seeds_sweep(
         log_dir=parent_logging_dir,
         data_path=config.test_file_list,
         approach=approach,
-        delta=delta
+        delta=delta,
+        add_noise=False,
+        run_scratch=True
     )
 
     results = []

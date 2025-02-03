@@ -10,5 +10,5 @@
 
 export TOKENIZERS_PARALLELISM=false
 python src/run_plm.py \
--a "single-prob" \
--e "error-weighted-penalty-tuned"
+-a "ensemble-prob" \
+-e "no-added-noise_no-sanitisation"

@@ -36,7 +36,10 @@ class ModelEvaluator:
                 seed=self.seed
             )
             
-            self.dl = dm.get_test_dl(data_path_list=data_path, batch_size=16, have_label=True, add_noise=add_noise)
+            self.dl = dm.get_test_dl(
+                data_path_list=data_path, batch_size=16, have_label=True,
+                sanitise_labels=False, add_noise=add_noise
+            )
 
     def test(self, model_path: str, save_uc_metrics: bool = False):
         trainer = L.Trainer(

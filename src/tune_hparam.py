@@ -33,20 +33,26 @@ def objective(
     ) -> float:
 
     # things to tune
-    # consistency_weight = trial.suggest_float("consistency_weight", 0.0, 100.0)
-    # penalty_weight = trial.suggest_float("penalty_weight", 0.0, 100.0)
-    # penalty_weight = 0.0
-    # loss_weights = [consistency_weight, penalty_weight]
-
     error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
-    lambda_penalty = trial.suggest_int("lambda_penalty", 0.0, 100)
+    penalty_weight = trial.suggest_float("penalty_weight", 0.0, 100.0)
+    loss_weights = [penalty_weight]
+    
+    if approach == "ensemble-prob":
+        consistency_weight = trial.suggest_float("consistency_weight", 0.0, 100.0)
+        loss_weights.append(consistency_weight)
     
     L.seed_everything(seed)
 
     datamodule = DataModuleFromRaw(delta=delta, seed=seed)
     
-    train_dl = datamodule.get_train_dl(data_path_list=config.train_file_list, batch_size=batch_size)
-    val_dl = datamodule.get_val_dl(data_path_list=config.val_file_list, batch_size=batch_size)
+    train_dl = datamodule.get_train_dl(
+        data_path_list=config.train_file_list, batch_size=batch_size,
+        sanitise_labels=False, add_noise=False
+    )
+    val_dl = datamodule.get_val_dl(
+        data_path_list=config.val_file_list, batch_size=batch_size,
+        sanitise_labels=False, add_noise=False
+    )
 
     if config.lr_scheduler_type == "linear":
         num_training_steps, num_warmup_steps = resolve_num_steps(config, train_dl)
@@ -81,7 +87,7 @@ def objective(
                 log_dir=logging_dir,
                 save_uc_metrics=False,
                 error_decay_factor=error_decay_factor,
-                lambda_penalty=lambda_penalty
+                loss_weights=loss_weights
             )
         elif approach == "ensemble-prob":
             model = LitProbabilisticPLMEnsemble(
@@ -89,7 +95,8 @@ def objective(
                 lr=lr,
                 num_training_steps=num_training_steps,
                 num_warmup_steps=num_warmup_steps,
-                loss_weights=loss_weights
+                loss_weights=loss_weights,
+                error_decay_factor=error_decay_factor
             )
 
     trainer.fit(model=model, train_dataloaders=train_dl, val_dataloaders=val_dl)
