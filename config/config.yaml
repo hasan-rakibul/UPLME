@@ -7,14 +7,18 @@ train_bsz: 16
 eval_bsz: 16
 parent_log_dir: ./log
 
-n_trials: 100
+n_trials: 10
 
 # seeds: [0, 42, 100, 999, 1234]
 seeds: [0]
+plm_names: ["cross-encoder/stsb-roberta-large"]
 # plm_names: ["roberta-base", "cardiffnlp/twitter-roberta-base-sentiment-latest"]
 # plm: siebert/sentiment-roberta-large-english
 
 delta: 2.0
+
+error_decay_factor: 0.5
+loss_weights: [0]
 
 # all files list that we can use for training / validation / testing
 article: data/NewsEmp2022/articles_adobe_AMT.csv

@@ -16,41 +16,17 @@ logger = logging.getLogger(__name__)
 
 pd.options.mode.copy_on_write = True # https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
 
-class BiEncoderDataCollator:
-    def __init__(self, tokeniser_1, tokeniser_2):
-        self.collator_1 = DataCollatorWithPadding(tokenizer=tokeniser_1)
-        self.collator_2 = DataCollatorWithPadding(tokenizer=tokeniser_2)
-
-    def __call__(self, batch):
-        labels = [example["labels"] for example in batch] if "labels" in batch[0] else None
-
-        batch_1 = [{k.replace("_1", ""): v for k, v in example.items() if "_1" in k} for example in batch]
-        batch_2 = [{k.replace("_2", ""): v for k, v in example.items() if "_2" in k} for example in batch]
-
-        batch_1 = self.collator_1(batch_1)
-        batch_2 = self.collator_2(batch_2)
-
-        final_batch = {
-            "input_ids_1": batch_1["input_ids"],
-            "attention_mask_1": batch_1["attention_mask"],
-            "input_ids_2": batch_2["input_ids"],
-            "attention_mask_2": batch_2["attention_mask"],
-        }
-
-        if labels is not None:
-            final_batch["labels"] = torch.tensor(labels)
-
-        return final_batch
-    
-class BiEncoderDataModule:
+class PreprocessorFromRaw:
+    """
+    Preprocess the raw data to the format that can be used in other data processing pipelines here.
+    It does the minimum processing required for the data.
+    """
     def __init__(
-            self, 
-            delta: float, 
-            tokeniser_plms: list[str]
-        ):
-
+            self,
+            delta: float
+    ):
         self.delta = delta
-
+        
         # keeping them constant for now, can make them arguments if required
         self.label_shift = 3.0
         self.noise_level = 0.2
@@ -58,27 +34,55 @@ class BiEncoderDataModule:
         self.label_max = 7.0
         self.label_column = "empathy"
         self.llm_column = "llm_empathy"
-        self.feature_to_tokenise = ["essay", "article"]
-        self.extra_columns_to_keep = [self.llm_column, "article_id"]
-        self.extra_columns_to_keep_train = []
-        self.max_length = 512
-        self.num_workers = 12
+        self.columns_to_keep = ["essay", "article", self.label_column, self.llm_column, "article_id"]
 
-        tokeniser_plm_1, tokeniser_plm_2 = tokeniser_plms
-        self.tokeniser_1 = AutoTokenizer.from_pretrained(
-                tokeniser_plm_1,
-                use_fast=True,
-                add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
-        )
+    def _raw_to_processed(
+        self, path: str, sanitise_labels: bool, add_noise: bool
+    ) -> pd.DataFrame:
+    
+        log_info(logger, f"\nReading data from {path}")
+        data = read_file(path)
+        
+        log_info(logger, f"Read {len(data)} samples from {path}")
 
-        self.tokeniser_2 = AutoTokenizer.from_pretrained(
-                tokeniser_plm_2,
-                use_fast=True,
-                add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
-        )
+        # if it is val of 2022 and 2023, the labels are separate files
+        val_goldstandard_file = None
+        if "WASSA23_essay_level_dev" in path:
+            val_goldstandard_file = "data/NewsEmp2023/goldstandard_dev.tsv"
+        elif "messages_dev_features_ready_for_WS_2022" in path:
+            val_goldstandard_file = "data/NewsEmp2022/goldstandard_dev_2022.tsv"
+        if val_goldstandard_file is not None:
+            assert os.path.exists(val_goldstandard_file), f"File {val_goldstandard_file} does not exist."
+            goldstandard = pd.read_csv(
+                val_goldstandard_file, 
+                sep='\t',
+                header=None # had no header in the file
+            )
+            # first column is empathy
+            goldstandard = goldstandard.rename(columns={0: self.label_column})
+            data = pd.concat([data, goldstandard], axis=1)
 
-        self.data_collator = BiEncoderDataCollator(tokeniser_1=self.tokeniser_1, tokeniser_2=self.tokeniser_2)
+        selected_data = data[[col for col in self.columns_to_keep if col in data.columns]] # keep only the columns that are in the data
 
+        # if have_label and (mode == "val" or mode == "test"):
+        if sanitise_labels:
+            log_info(logger, f"Santitising labels of {path} file.\n")
+            selected_data = self._label_fix(selected_data)
+
+        if add_noise:
+            log_info(logger, f"Flipping labels of {path} file.\n")
+            selected_data = self._flip_labels(selected_data)
+        
+        if selected_data.isna().any().any(): 
+            log_info(logger, f"Columns {selected_data.columns[selected_data.isna().any()].tolist()} have {selected_data.isna().sum().sum()} NaN values in total.")
+            selected_data.dropna(inplace=True) # drop NaN values; this could be NaN if the essay or label is None, so we drop the whole row
+            log_info(logger, f"Removed rows with any NaN values. {len(selected_data)} samples remaining.\n")
+
+        assert not selected_data.isna().any().any(), "There are still NaN values in the data."
+        assert not selected_data.isnull().any().any(), "The are still null values in the data"
+
+        return selected_data
+    
     def _label_fix(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Only keep the samples with the absolute difference between 'empathy' and 'llm_empathy' less than self.delta
@@ -116,73 +120,112 @@ class BiEncoderDataModule:
             data.at[idx, "noise"] = noise_amount
 
         return data
-
-    def _raw_to_processed(
-            self, path: str, have_label: bool, mode: str, sanitise_labels: bool, 
-            add_noise: bool
-        ) -> pd.DataFrame:
-        
-        log_info(logger, f"\nReading data from {path}")
-        data = read_file(path)
-        
-        log_info(logger, f"Read {len(data)} samples from {path}")
-
-        # keep revent columns only
-        columns_to_keep = self.feature_to_tokenise + \
-            self.extra_columns_to_keep
-
-        # if it is val of 2022 and 2023, the labels are separate files
-        val_goldstandard_file = None
-        if "WASSA23_essay_level_dev" in path:
-            val_goldstandard_file = "data/NewsEmp2023/goldstandard_dev.tsv"
-        elif "messages_dev_features_ready_for_WS_2022" in path:
-            val_goldstandard_file = "data/NewsEmp2022/goldstandard_dev_2022.tsv"
-        if val_goldstandard_file is not None:
-            assert os.path.exists(val_goldstandard_file), f"File {val_goldstandard_file} does not exist."
-            goldstandard = pd.read_csv(
-                val_goldstandard_file, 
-                sep='\t',
-                header=None # had no header in the file
+    
+    def process_data(self, data_path_list: list[str], sanitise_labels: bool, add_noise: bool):
+        # we may combine the data from different versions
+        all_data = pd.DataFrame()
+        for data_path in data_path_list:
+            data = self._raw_to_processed(
+                path=data_path,
+                sanitise_labels=sanitise_labels,
+                add_noise=add_noise
             )
-            # first column is empathy
-            goldstandard = goldstandard.rename(columns={0: self.label_column})
-            data = pd.concat([data, goldstandard], axis=1)
+            all_data = pd.concat([all_data, data], ignore_index=True) if not all_data.empty else data
 
-        if have_label:
-            columns_to_keep.append(self.label_column)
+        log_info(logger, f"Total number of samples: {len(all_data)}\n")
+        assert not all_data.isna().any().any(), "There are still NaN values in the data." # may occur due to the concat
+        assert not all_data.isnull().any().any(), "The are still null values in the data"
         
-        if mode == "train":
-            columns_to_keep.extend(self.extra_columns_to_keep_train) # this is a list
+        # add article information
+        article = read_file("data/NewsEmp2022/articles_adobe_AMT.csv")
+        all_data = pd.merge(all_data, article, on="article_id", how="left")
+        all_data.drop(columns=["article_id"], inplace=True)
+        all_data.rename(columns={"text": "article"}, inplace=True) # article was named as text in the file
 
-        selected_data = data[[col for col in columns_to_keep if col in data.columns]] # keep only the columns that are in the data
+        if self.llm_column in all_data.columns:
+            all_data.drop(columns=[self.llm_column], inplace=True)
 
-        # if have_label and (mode == "val" or mode == "test"):
-        if sanitise_labels:
-            log_info(logger, f"Santitising labels of {path} file.\n")
-            selected_data = self._label_fix(selected_data)
+        all_data.rename(
+            columns={
+                self.label_column: "labels", 
+                "article": "text_1", 
+                "essay": "text_2"
+            },
+            inplace=True
+        )
 
-        if add_noise:
-            log_info(logger, f"Flipping labels of {path} file.\n")
-            selected_data = self._flip_labels(selected_data)
-        
-        if selected_data.isna().any().any(): 
-            log_info(logger, f"Columns {selected_data.columns[selected_data.isna().any()].tolist()} have {selected_data.isna().sum().sum()} NaN values in total.")
-            selected_data = selected_data.dropna() # drop NaN values; this could be NaN if the essay or label is None, so we drop the whole row
-            log_info(logger, f"Removed rows with any NaN values. {len(selected_data)} samples remaining.\n")
+        return all_data
 
-        assert selected_data.isna().any().any() == False, "There are still NaN values in the data."
-        assert selected_data.isnull().any().any() == False, "The are still null values in the data"
+class BiEncoderDataCollator:
+    def __init__(self, tokeniser_1, tokeniser_2):
+        self.collator_1 = DataCollatorWithPadding(tokenizer=tokeniser_1)
+        self.collator_2 = DataCollatorWithPadding(tokenizer=tokeniser_2)
 
-        return selected_data
+    def __call__(self, batch):
+        labels = [example["labels"] for example in batch] if "labels" in batch[0] else None
 
-    def _tokeniser_fn(self, sentence):
-        tokenised_1 = self.tokeniser_1(
+        batch_1 = [{k.replace("_1", ""): v for k, v in example.items() if "_1" in k} for example in batch]
+        batch_2 = [{k.replace("_2", ""): v for k, v in example.items() if "_2" in k} for example in batch]
+
+        batch_1 = self.collator_1(batch_1)
+        batch_2 = self.collator_2(batch_2)
+
+        final_batch = {
+            "input_ids_1": batch_1["input_ids"],
+            "attention_mask_1": batch_1["attention_mask"],
+            "input_ids_2": batch_2["input_ids"],
+            "attention_mask_2": batch_2["attention_mask"],
+        }
+
+        if labels is not None:
+            final_batch["labels"] = torch.tensor(labels)
+
+        return final_batch
+    
+class PairedTextDataModule:
+    def __init__(
+            self, 
+            delta: float, 
+            tokeniser_plms: list[str]
+        ):
+
+        self.delta = delta
+
+        self.data_preprocessor = PreprocessorFromRaw(delta=self.delta)
+
+        # keeping them constant for now, can make them arguments if required
+        self.feature_to_tokenise = ["text_1", "text_2"]
+        self.max_length = 512
+        self.num_workers = 12
+
+        self.tokeniser_plms = tokeniser_plms
+
+        self.tokeniser = AutoTokenizer.from_pretrained(
+                self.tokeniser_plms[0],
+                use_fast=True,
+                add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
+        )
+
+        if len(self.tokeniser_plms) == 2:
+            self.tokeniser_extra = AutoTokenizer.from_pretrained(
+                    tokeniser_plms[1],
+                    use_fast=True,
+                    add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
+            )
+
+            self.data_collator = BiEncoderDataCollator(tokeniser_1=self.tokeniser, tokeniser_2=self.tokeniser_extra)
+
+        else:
+            self.data_collator = DataCollatorWithPadding(tokenizer=self.tokeniser)
+
+    def _tokeniser_bi_encoder(self, sentence):
+        tokenised_1 = self.tokeniser(
             sentence[self.feature_to_tokenise[0]],
             truncation=True,
             max_length=self.max_length
         )
 
-        tokenised_2 = self.tokeniser_2(
+        tokenised_2 = self.tokeniser_extra(
             sentence[self.feature_to_tokenise[1]],
             truncation=True,
             max_length=self.max_length
@@ -194,49 +237,31 @@ class BiEncoderDataModule:
             'input_ids_2': tokenised_2['input_ids'],
             'attention_mask_2': tokenised_2['attention_mask']
         }
+        
+    def _tokeniser_cross_encoder(self, sentence):
+        return self.tokeniser(
+            sentence[self.feature_to_tokenise[0]],
+            sentence[self.feature_to_tokenise[1]],
+            truncation=True,
+            max_length=self.max_length
+        )
 
     def get_hf_data(self, data_path_list, have_label, mode, sanitise_labels, add_noise):
-        # we may combine the data from different versions
-        for data_path in data_path_list:
-            data = self._raw_to_processed(
-                data_path, have_label, mode,
-                sanitise_labels=sanitise_labels,
-                add_noise=add_noise
-            )
-            if 'all_data' in locals():
-                all_data = pd.concat([all_data, data])
-            else:
-                all_data = data
-
-        log_info(logger, f"Total number of {mode} samples: {len(all_data)}\n")
-        assert all_data.isna().any().any() == False, "There are still NaN values in the data." # may occur due to the concat
-        assert all_data.isnull().any().any() == False, "The are still null values in the data"
-        
-        # add article information
-        article = read_file("data/NewsEmp2022/articles_adobe_AMT.csv")
-        all_data = pd.merge(all_data, article, on="article_id", how="left")
-        all_data = all_data.drop(columns=["article_id"])
-        all_data = all_data.rename(columns={"text": "article"}) # article was named as text in the file
-
-        # all_data.to_csv(f"tmp/all_{mode}_data.tsv", sep='\t', index=False) # save the data for debugging
-
-        # if mode == "train":
-        #     # add sample_id column
-        #     all_data['sample_id'] = range(len(all_data))
-
-        if self.llm_column in all_data.columns:
-            all_data = all_data.drop(columns=[self.llm_column])   
+        all_data = self.data_preprocessor.process_data(
+            data_path_list=data_path_list,
+            sanitise_labels=sanitise_labels,
+            add_noise=add_noise
+        )
 
         all_data_hf = Dataset.from_pandas(all_data, preserve_index=False) # convert to huggingface dataset
         
         # tokenise
         all_data_hf = all_data_hf.map(
-            self._tokeniser_fn, 
+            self._tokeniser_bi_encoder if len(self.tokeniser_plms) == 2 else self._tokeniser_cross_encoder,
             batched=True,
             remove_columns=self.feature_to_tokenise
         )
-        if have_label:
-            all_data_hf = all_data_hf.rename_column(self.label_column, 'labels')
+
         all_data_hf.set_format('torch')
         
         return all_data_hf
@@ -528,3 +553,5 @@ class DataModuleFromRaw:
             data_path_list, have_label=have_label, shuffle=False, mode="test", 
             batch_size=batch_size, sanitise_labels=sanitise_labels, add_noise=add_noise
         ) # we have labels in 2024 data
+
+

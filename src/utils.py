@@ -192,45 +192,27 @@ def log_info(logger, msg):
 def log_debug(logger, msg):
     logger.debug(msg)
 
-def prepare_train_config(config: OmegaConf, approach: str) -> OmegaConf:
-    config.expt_name = f"{approach}_({','.join([str(data) for data in config.train_data])})"
-
-    if config.expt_name_postfix != "":
-        config.expt_name += f"-{config.expt_name_postfix}"
-
-    train_attr = f"train_{config.llm}"
-    val_attr = f"val_{config.llm}"
-    test_attr = f"test_{config.llm}"
+def retrieve_file_names(config: OmegaConf) -> tuple[list, list, list]:
+    llm = "llama"
+    train_attr = f"train_{llm}"
+    val_attr = f"val_{llm}"
+    test_attr = f"test_{llm}"
     
-    config.train_file_list = []
+    train_file_list = []
     for data in config.train_data:
-        config.train_file_list.append(getattr(config[data], train_attr))
+        train_file_list.append(getattr(config[data], train_attr))
         if data != config.val_data:
             # we don't want to include val data in the training data for the same year
-            config.train_file_list.append(getattr(config[data], val_attr))
+            train_file_list.append(getattr(config[data], val_attr))
 
-    config.val_file_list = [getattr(config[config.val_data], val_attr)]
-    config.test_file_list = [getattr(config[config.val_data], test_attr)]
+    val_file_list = [getattr(config[config.val_data], val_attr)]
+    test_file_list = [getattr(config[config.val_data], test_attr)]
 
-    log_info(logger, f"Experiment name: {config.expt_name}")
-    log_info(logger, f"Train data: {config.train_file_list}")
-    log_info(logger, f"Val data: {config.val_file_list}")
-    log_info(logger, f"Test data: {config.test_file_list}")
+    log_info(logger, f"Train data: {train_file_list}")
+    log_info(logger, f"Val data: {val_file_list}")
+    log_info(logger, f"Test data: {test_file_list}")
 
-    if len(config.lrs) > 1 or len(config.batch_sizes) > 1:
-        config.do_test = False
-    else:
-        config.do_test = True
-
-    if config.val_data in [2023, 2022]:
-        # only way to test is through CodaLab submission
-        config.test_have_label = False
-        config.make_ready_for_submission = True
-    else:
-        config.test_have_label = True
-        config.make_ready_for_submission = False
-
-    return config
+    return train_file_list, val_file_list, test_file_list
 
 def prepare_test_config(config: OmegaConf) -> OmegaConf:
     config.batch_size = config.eval_batch_size
@@ -247,7 +229,7 @@ def prepare_test_config(config: OmegaConf) -> OmegaConf:
     return config
 
 def resolve_num_steps(config: OmegaConf, train_dl) -> tuple:
-        # number of training steps is required for linear scheduler
+    # number of training steps is required for linear scheduler
     num_training_steps = len(train_dl) * config.num_epochs
     if "num_warmup_steps" in config:
         num_warmup_steps = config.num_warmup_steps
