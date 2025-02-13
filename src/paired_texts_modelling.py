@@ -1,11 +1,12 @@
 import torch
+from torch import Tensor
 import torch.nn.functional as F
 import lightning as L
 from transformers import (
     AutoModel, 
     get_linear_schedule_with_warmup
 )
-from torchmetrics.functional import pearson_corrcoef, concordance_corrcoef, mean_squared_error
+from torchmetrics.functional import pearson_corrcoef, concordance_corrcoef, mean_squared_error, spearman_corrcoef
 import logging
 import numpy as np
 
@@ -24,11 +25,12 @@ from functools import partial
 from utils import log_info, process_seedwise_metrics, DelayedStartEarlyStopping 
 from preprocess import PairedTextDataModule
 
-from utils import log_info
+from utils import log_info, plot_uncertainy
+from util_uncertainty_metrics import calculate_unc_metrics 
 
 logger = logging.getLogger(__name__)
 
-class BiEncoderModel(torch.nn.Module):
+class BiEncoderProbModel(torch.nn.Module):
     def __init__(
         self,
         plm_names: list[str]
@@ -62,6 +64,7 @@ class BiEncoderModel(torch.nn.Module):
         x = F.relu(self.fc_concat(x))
         x = F.dropout(x, p=0.25)
 
+        raise NotImplementedError("Needs to fix the FC layers and the output, like cross-encoder.")
         unbounded_mean = self.fc_m(x)
         scaled_mean = self.min_score + (self.max_score - self.min_score) * torch.sigmoid(unbounded_mean)
         
@@ -69,16 +72,23 @@ class BiEncoderModel(torch.nn.Module):
 
         return scaled_mean.squeeze(), var.squeeze()
     
-class CrossEncoderModel(torch.nn.Module):
+class CrossEncoderProbModel(torch.nn.Module):
     def __init__(self, plm_name: str):
         super().__init__()
         self.model = AutoModel.from_pretrained(plm_name)
-        
-        self.fc_m = torch.nn.Linear(1024, 1)
-        self.fc_v = torch.nn.Linear(1024, 1)
 
-        self.min_score = 1.0
-        self.max_score = 7.0
+        self.pooling = "roberta-pooler"
+
+        self.out_proj_m = torch.nn.Sequential(
+            torch.nn.Dropout(0.1),
+            torch.nn.Linear(self.model.config.hidden_size, 1)
+        )
+
+        self.out_proj_v = torch.nn.Sequential(
+            torch.nn.Dropout(0.1),
+            torch.nn.Linear(self.model.config.hidden_size, 1),
+            torch.nn.Softplus()
+        )
 
     def forward(self, batch):
         output = self.model(
@@ -86,18 +96,49 @@ class CrossEncoderModel(torch.nn.Module):
             attention_mask=batch['attention_mask']
         )
 
-        # mean pooling
-        attn = batch['attention_mask']
-        sentence_representation = (output.last_hidden_state * attn.unsqueeze(-1)).sum(-2) / attn.sum(dim=-1).unsqueeze(-1)
+        if self.pooling == "mean":
+            attn = batch['attention_mask']
+            sentence_representation = (output.last_hidden_state * attn.unsqueeze(-1)).sum(-2) / attn.sum(dim=-1).unsqueeze(-1)
+        elif self.pooling == "cls":
+            sentence_representation = output.last_hidden_state[:, 0, :]
+        elif self.pooling == "roberta-pooler":
+            sentence_representation = output.pooler_output
 
-        unbounded_mean = self.fc_m(sentence_representation)
-        scaled_mean = self.min_score + (self.max_score - self.min_score) * torch.sigmoid(unbounded_mean)
+        mean = self.out_proj_m(sentence_representation)
+        var = self.out_proj_v(sentence_representation)
 
-        var = F.softplus(self.fc_v(sentence_representation)) # variance must be positive
+        return mean.squeeze(), var.squeeze()
 
-        return scaled_mean.squeeze(), var.squeeze()
+class CrossEncoderBasicModel(torch.nn.Module):
+    def __init__(self, plm_name: str):
+        super().__init__()
+        self.model = AutoModel.from_pretrained(plm_name)
+        self.pooling = "roberta-pooler"
+
+        self.out_proj = torch.nn.Sequential(
+            torch.nn.Dropout(0.1),
+            torch.nn.Linear(self.model.config.hidden_size, 1)
+        )
+
+    def forward(self, batch):
+        output = self.model(
+            input_ids=batch['input_ids'],
+            attention_mask=batch['attention_mask']
+        )
+
+        if self.pooling == "mean":
+            attn = batch['attention_mask']
+            sentence_representation = (output.last_hidden_state * attn.unsqueeze(-1)).sum(-2) / attn.sum(dim=-1).unsqueeze(-1)
+        elif self.pooling == "cls":
+            sentence_representation = output.last_hidden_state[:, 0, :]
+        elif self.pooling == "roberta-pooler":
+            sentence_representation = output.pooler_output
+
+        y_hat = self.out_proj(sentence_representation) 
+
+        return y_hat.squeeze(), None # there's no varianc being modelled, just return None for compatibility
     
-class LitPariedTextModel(L.LightningModule):
+class LitPairedTextModel(L.LightningModule):
     def __init__(
         self,
         plm_names: list[str],
@@ -107,15 +148,19 @@ class LitPariedTextModel(L.LightningModule):
         log_dir: str,
         save_uc_metrics: bool,
         error_decay_factor: float,
-        loss_weights: list[float] 
+        loss_weights: list[float],
+        approach: str | None = None
     ):
         super().__init__()
         self.save_hyperparameters()
 
-        if len(plm_names) == 2:
-            self.model = BiEncoderModel(plm_names=plm_names)
-        elif len(plm_names) == 1:
-            self.model = CrossEncoderModel(plm_name=plm_names[0])
+        self.approach = approach
+        if self.approach == "basic":
+            self.model = CrossEncoderBasicModel(plm_name=plm_names[0])
+        elif self.approach == "bi-prob":
+            self.model = BiEncoderProbModel(plm_names=plm_names)
+        elif self.approach == "cross-prob":
+            self.model = CrossEncoderProbModel(plm_name=plm_names[0])
 
         self.lr = lr
         self.num_training_steps = num_training_steps
@@ -125,7 +170,7 @@ class LitPariedTextModel(L.LightningModule):
 
         self.error_decay_factor = error_decay_factor
         self.loss_weights = loss_weights
-        
+
         self.validation_outputs = []
         self.test_outputs = []
 
@@ -169,68 +214,77 @@ class LitPariedTextModel(L.LightningModule):
 
         return self.loss_weights[0] * penalty_loss
     
-    def compute_and_log_loss(self, mean, var, labels, mode: str):
-        nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
+    def _compute_and_log_loss_lbl(self, mean: torch.Tensor, var: torch.Tensor | None, labels: torch.Tensor, prefix: str):
+        if var is None:
+            # Basic model with MSE loss
+            total_loss = F.mse_loss(mean, labels.squeeze())
+        else:
+            nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
 
-        penalty_loss = self._compute_penalty_loss(mean=mean, var=var, labels=labels)
-        
-        total_loss = nll_loss + penalty_loss
+            penalty_loss = self._compute_penalty_loss(mean=mean, var=var, labels=labels)
+            
+            total_loss = nll_loss + penalty_loss
 
-        self.log(f"{mode}_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        self.log(f"{mode}_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-        self.log(f"{mode}_total_loss", total_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+            self.log(f"{prefix}_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+            self.log(f"{prefix}_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+
+        self.log(f"{prefix}_total_loss", total_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
         return total_loss
     
     def training_step(self, batch, batch_idx):
         mean, var = self(batch)
-        loss = self.compute_and_log_loss(mean, var, batch["labels"], mode="train")
+        loss = self._compute_and_log_loss_lbl(mean, var, batch["labels"], prefix="train")
         return loss
     
     def validation_step(self, batch, batch_idx):
         mean, var = self(batch)
-        _ = self.compute_and_log_loss(mean, var, batch["labels"], mode="val")
+        _ = self._compute_and_log_loss_lbl(mean, var, batch["labels"], prefix="val")
 
         self.validation_outputs.append({
             "mean": mean,
             "var": var,
             "labels": batch["labels"]
         })
+
+    def _calculate_metrics(self, mean: Tensor, var: Tensor, label: Tensor, mode: str) -> dict:
+        pcc = pearson_corrcoef(mean, label)
+        ccc = concordance_corrcoef(mean, label)
+        rmse = mean_squared_error(mean, label, squared=False)
+        scc = spearman_corrcoef(mean, label)
+
+        metrics_dict = {
+            f"{mode}_pcc": pcc,
+            f"{mode}_ccc": ccc,
+            f"{mode}_rmse": rmse,
+            f"{mode}_scc": scc
+        }
+
+        unc_metrics = calculate_unc_metrics(mean=mean, var=var, label=label)
+        unc_metrics = {f"{mode}_{k}": v for k, v in unc_metrics.items()}
+        metrics_dict.update(unc_metrics)
+        
+        return metrics_dict
     
     def on_validation_epoch_end(self):
         all_means = torch.cat([out["mean"] for out in self.validation_outputs])
+        all_vars = torch.cat([out["var"] for out in self.validation_outputs])
         all_labels = torch.cat([out["labels"] for out in self.validation_outputs])
 
         all_means = all_means.to(torch.float64).cpu()
+        all_vars = all_vars.to(torch.float64).cpu()
         all_labels = all_labels.to(torch.float64).cpu()
 
-        self.log(
-            "val_pcc",
-            pearson_corrcoef(all_means, all_labels),
-            logger=True,
-            prog_bar=False,
-            sync_dist=True
-        )
-
-        self.log(
-            "val_ccc",
-            concordance_corrcoef(all_means, all_labels),
+        self.log_dict(
+            self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val"),
             logger=True,
             prog_bar=True,
             sync_dist=True
         )
 
-        self.log(
-            "val_rmse",
-            mean_squared_error(all_means, all_labels, squared=False),
-            logger=True,
-            prog_bar=False,
-            sync_dist=True
-        )
-
         self.validation_outputs.clear()
 
-    def _save_npy(self, output: list[dict], save_str: str = "unc"):
+    def _save_and_plot_uncertainty(self, output: list[dict]):
         # convert tensors to numpy arrays
         output_dict = {}
         for out in output:
@@ -241,8 +295,11 @@ class LitPariedTextModel(L.LightningModule):
                 else:
                     output_dict[key] = array
         
-        np.save(f"{self.log_dir}/output_{save_str}.npy", output_dict)
-        log_info(logger, f"Saved output to {self.log_dir}/output_{save_str}.npy")
+        # save for later use
+        np.save(f"{self.log_dir}/outputs.npy", output_dict)
+        log_info(logger, f"Saved output to {self.log_dir}/outpus.npy")
+
+        plot_uncertainy(output_dict, f"{self.log_dir}/uncertainty.pdf")
 
     def test_step(self, batch, batch_idx):
         mean, var = self(batch)
@@ -262,42 +319,27 @@ class LitPariedTextModel(L.LightningModule):
 
     def on_test_epoch_end(self):
         all_means = torch.cat([out["mean"] for out in self.test_outputs])
+        all_vars = torch.cat([out["var"] for out in self.test_outputs])
         all_means = all_means.to(torch.float64).cpu()
+        all_vars = all_vars.to(torch.float64).cpu()
 
         if "labels" in self.test_outputs[0]:
             all_labels = torch.cat([out["labels"] for out in self.test_outputs])
             all_labels = all_labels.to(torch.float64).cpu()
 
-            self.log(
-                "test_pcc",
-                pearson_corrcoef(all_means, all_labels),
+            self.log_dict(
+                self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="test"),
                 logger=False,
-                prog_bar=True,
+                prog_bar=False,
                 sync_dist=True
             )
 
-            self.log(
-                "test_ccc",
-                concordance_corrcoef(all_means, all_labels),
-                logger=False,
-                prog_bar=True,
-                sync_dist=True
-            )
-
-            self.log(
-                "test_rmse",
-                mean_squared_error(all_means, all_labels, squared=False),
-                logger=False,
-                prog_bar=True,
-                sync_dist=True
-            )
-
-        if self.save_uc_metrics:
-            self._save_npy(self.test_outputs)
+        if self.approach != "basic":
+            self._save_and_plot_uncertainty(self.test_outputs)
 
         self.test_outputs.clear()
 
-class PairedTextModelTrainer(object):
+class PairedTextModelController(object):
     def __init__(
         self,
         train_file: list[str],
@@ -311,10 +353,11 @@ class PairedTextModelTrainer(object):
         expt_name: str,
         debug: bool,
         do_tune: bool = False,
+        do_train: bool = True,
         do_test: bool = False,
-        plm_names: list[str] = ["roberta-base"],
         error_decay_factor: float = 0.5,
-        loss_weights: list[float] = [0]
+        loss_weights: list[float] = [0],
+        approach: str | None = None
     ):
         self.train_file = train_file
         self.val_file = val_file
@@ -329,16 +372,27 @@ class PairedTextModelTrainer(object):
         self.expt_name = expt_name
         self.debug = debug
         self.do_tune = do_tune
+        self.do_train = do_train
         self.do_test = do_test
         self.error_decay_factor = error_decay_factor
         self.loss_weights = loss_weights
+        self.approach = approach
 
         self.enable_early_stopping = True
         self.early_stopping_start_epoch = 5
         self.enable_checkpointing = True
-        self.plm_names =plm_names
         self.save_uc_metrics = False
         self.warmup_ratio = 0.06
+
+        if self.approach == "basic":
+            self.plm_names = ["roberta-base"]
+        elif self.approach == "bi-prob":
+            self.plm_names = ["roberta-base", "roberta-base"]
+        elif self.approach == "cross-prob":
+            # self.plm_names = ["cross-encoder/stsb-roberta-base"]
+            self.plm_names = ["roberta-base"]
+        else:
+            raise ValueError(f"Unknown approach: {self.approach}")
 
         self.dm = PairedTextDataModule(
             delta=self.delta,
@@ -407,7 +461,7 @@ class PairedTextModelTrainer(object):
         val_dl = self.dm.get_val_dl(
             data_path_list=self.val_file,
             batch_size=self.eval_bsz,
-            sanitise_labels=True,
+            sanitise_labels=False,
             add_noise=False
         )
 
@@ -426,7 +480,7 @@ class PairedTextModelTrainer(object):
             log_info(logger, f"Training from scratch")  
             with trainer.init_module():
                 # model created here directly goes to GPU
-                model = LitPariedTextModel(
+                model = LitPairedTextModel(
                     plm_names=self.plm_names,
                     lr=self.lr,
                     num_training_steps=num_training_steps,
@@ -434,7 +488,8 @@ class PairedTextModelTrainer(object):
                     log_dir=curr_log_dir,
                     save_uc_metrics=self.save_uc_metrics,
                     error_decay_factor=self.error_decay_factor,
-                    loss_weights=self.loss_weights
+                    loss_weights=self.loss_weights,
+                    approach=self.approach
                 )
             
             trainer.fit(
@@ -449,15 +504,11 @@ class PairedTextModelTrainer(object):
         # final validation at the end of training
         log_info(logger, f"Loading the best model from {best_model_ckpt}")
         with trainer.init_module(empty_init=True):
-            model = LitPariedTextModel.load_from_checkpoint(best_model_ckpt)
+            model = LitPairedTextModel.load_from_checkpoint(best_model_ckpt)
 
         trainer.validate(model=model, dataloaders=val_dl)
 
-        metrics = {
-            "val_pcc": trainer.callback_metrics["val_pcc"].item(),
-            "val_ccc": trainer.callback_metrics["val_ccc"].item(),
-            "val_rmse": trainer.callback_metrics["val_rmse"].item()
-        }
+        metrics = {key: value.item() for key, value in trainer.callback_metrics.items()}
 
         if isinstance(trainer.logger, WandbLogger):
             trainer.logger.experiment.finish()
@@ -472,23 +523,16 @@ class PairedTextModelTrainer(object):
         )
 
         test_dl = self.dm.get_test_dl(
-            data_path_list=self.test_file, batch_size=16, have_label=True,
+            data_path_list=self.test_file, batch_size=16, 
             sanitise_labels=False, add_noise=False
         )
 
         with tester.init_module(empty_init=True):
-            model = LitPariedTextModel.load_from_checkpoint(model_path, save_uc_metrics=self.save_uc_metrics)
+            model = LitPairedTextModel.load_from_checkpoint(model_path, save_uc_metrics=self.save_uc_metrics)
 
         tester.test(model=model, dataloaders=test_dl, verbose=True)
 
-        try:
-            metrics = {
-                "test_pcc": tester.callback_metrics["test_pcc"].item(),
-                "test_ccc": tester.callback_metrics["test_ccc"].item(),
-                "test_rmse": tester.callback_metrics["test_rmse"].item()
-            }
-        except KeyError:
-            metrics = {}
+        metrics = {key: value.item() for key, value in tester.callback_metrics.items()}
         
         return metrics
     
@@ -501,27 +545,33 @@ class PairedTextModelTrainer(object):
         results = []
         for seed in seeds:
             log_info(logger, f"Current seed: {seed}")
-            curr_log_dir = os.path.join(parent_log_dir, f"seed_{seed}")
 
-            best_model_ckpt, metrics = self._seed_wise_train_validate(
-                seed=seed,
-                curr_log_dir=curr_log_dir
-            )
+            curr_log_dir = os.path.join(parent_log_dir, f"seed_{seed}")
+            if self.do_train:
+                best_model_ckpt, metrics = self._seed_wise_train_validate(
+                    seed=seed,
+                    curr_log_dir=curr_log_dir
+                )
+            else:
+                best_model_ckpt = glob.glob(os.path.join(curr_log_dir, "**/*.ckpt"), recursive=True)
+                assert len(best_model_ckpt) == 1, f"Found {len(best_model_ckpt)} ckpt files."
+                best_model_ckpt = best_model_ckpt[0]
+                metrics = {} # empty val metrics
             
             if self.do_test:
                 # subsequent testing
-                log_info(logger, f"Testing right after training from {best_model_ckpt}")
+                log_info(logger, f"Testing using: {best_model_ckpt}")
                 test_metrics = self.evaluate(best_model_ckpt)
                 metrics = {**metrics, **test_metrics} # merge the two dictionaries 
 
             metrics["seed"] = seed
             log_info(logger, f"Metrics: {metrics}")
             results.append(metrics)
-        save_as = os.path.join(parent_log_dir, "results.csv")
+        save_as = os.path.join(parent_log_dir, f"results_val-{self.do_train}_test-{self.do_test}.csv")
         process_seedwise_metrics(results, save_as)
 
     def optuna_objective(self, trial: optuna.trial.Trial, optuna_seed: int, optuna_log_dir: str) -> float:
-        self.lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
+        self.lr = trial.suggest_categorical("lr", [1e-5, 2e-5, 3e-5, 4e-5])
         self.train_bsz = trial.suggest_int("train_bsz", 8, 32, step=8)
 
         self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
