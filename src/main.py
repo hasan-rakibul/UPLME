@@ -50,7 +50,7 @@ if __name__ == "__main__":
         raise ValueError("Assuming you want to test only, please provide the overwrite_log_dir")
 
     expt_name = f'{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}_{approach}_ssl_{is_ssl}'
-    if expt_name_postfix != "":
+    if expt_name_postfix is not None:
         expt_name += f"-{expt_name_postfix}"
 
     train_file_list, val_file_list, test_file_list = retrieve_newsemp_file_names(config)
@@ -71,8 +71,8 @@ if __name__ == "__main__":
         n_trials = 2
         parent_log_dir = "./log/debug"
         expt_name = "debug"
-        # if os.path.exists(parent_log_dir):
-        #     os.system(f"rm -rf {parent_log_dir}")
+        if os.path.exists(parent_log_dir):
+            os.system(f"rm -rf {parent_log_dir}")
         os.makedirs(parent_log_dir, exist_ok=True)
 
     if is_ssl:

@@ -167,6 +167,9 @@ class SSLModelController(PairedTextModelController):
 
         train_dl = CombinedLoader({"lbl": train_dl_lbl, "unlbl": train_dl_unlbl}, mode="max_size_cycle")
 
+        # according to https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.utilities.combined_loader.html
+        _ = iter(train_dl)
+
         val_dl = self.dm.get_val_dl(
             data_path_list=self.val_file,
             batch_size=self.eval_bsz,
@@ -176,8 +179,7 @@ class SSLModelController(PairedTextModelController):
         )
 
         trainer = self._prepare_trainer(curr_log_dir=curr_log_dir, extra_callbacks=extra_callbacks)
-        # num_batches = len(train_dl)
-        num_batches = max(len(train_dl_lbl), len(train_dl_unlbl))
+        num_batches = len(train_dl)
         num_training_steps = num_batches * self.num_epochs
         num_warmup_steps = int(self.warmup_ratio * num_batches * 10) # 10 epochs, like the RoBERTa paper
 

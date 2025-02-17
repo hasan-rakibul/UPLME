@@ -149,10 +149,10 @@ class NewsEmpPreprocessorFromRaw:
         )
 
         # add article information
-        article = read_newsemp_file("data/NewsEmp2022/articles_adobe_AMT.csv")
+        article = pd.read_csv("data/article-summarised.csv", index_col=0)
         all_data = pd.merge(all_data, article, on="article_id", how="left")
-        all_data.drop(columns=["article_id"], inplace=True)
-        all_data.rename(columns={"text": "text_2"}, inplace=True)
+        all_data.drop(columns=["article_id", "text"], inplace=True)
+        all_data.rename(columns={"summary_text": "text_2"}, inplace=True)
 
         return all_data
 

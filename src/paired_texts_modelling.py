@@ -136,7 +136,7 @@ class CrossEncoderBasicModel(torch.nn.Module):
 
         y_hat = self.out_proj(sentence_representation) 
 
-        return y_hat.squeeze(), None # there's no varianc being modelled, just return None for compatibility
+        return y_hat.squeeze(), None # there's no variance being modelled, just return None for compatibility
     
 class LitPairedTextModel(L.LightningModule):
     def __init__(
@@ -218,7 +218,7 @@ class LitPairedTextModel(L.LightningModule):
         else:
             raise ValueError(f"Invalid penalty type: {self.penalty_type}")
 
-        return self.loss_weight[0] * penalty_loss
+        return self.loss_weight * penalty_loss
     
     def _compute_and_log_loss_lbl(self, mean: Tensor, var: Tensor | None, labels: Tensor, prefix: str):
         if var is None:
@@ -256,30 +256,36 @@ class LitPairedTextModel(L.LightningModule):
     def _calculate_metrics(self, mean: Tensor, var: Tensor, label: Tensor, mode: str) -> dict:
         pcc = pearson_corrcoef(mean, label)
         ccc = concordance_corrcoef(mean, label)
-        rmse = mean_squared_error(mean, label, squared=False)
         scc = spearman_corrcoef(mean, label)
+        rmse = mean_squared_error(mean, label, squared=False)
 
         metrics_dict = {
             f"{mode}_pcc": pcc,
             f"{mode}_ccc": ccc,
-            f"{mode}_rmse": rmse,
-            f"{mode}_scc": scc
+            f"{mode}_scc": scc,
+            f"{mode}_rmse": rmse
         }
 
-        unc_metrics = calculate_unc_metrics(mean=mean, var=var, label=label)
-        unc_metrics = {f"{mode}_{k}": v for k, v in unc_metrics.items()}
-        metrics_dict.update(unc_metrics)
+        if var is not None:
+            # meaning that the model is probabilistic
+            unc_metrics = calculate_unc_metrics(mean=mean, var=var, label=label)
+            unc_metrics = {f"{mode}_{k}": v for k, v in unc_metrics.items()}
+            metrics_dict.update(unc_metrics)
         
         return metrics_dict
     
     def on_validation_epoch_end(self):
         all_means = torch.cat([out["mean"] for out in self.validation_outputs])
-        all_vars = torch.cat([out["var"] for out in self.validation_outputs])
         all_labels = torch.cat([out["labels"] for out in self.validation_outputs])
 
         all_means = all_means.to(torch.float64).cpu()
-        all_vars = all_vars.to(torch.float64).cpu()
         all_labels = all_labels.to(torch.float64).cpu()
+
+        if self.validation_outputs[0]["var"] is None:
+            all_vars = None
+        else:
+            all_vars = torch.cat([out["var"] for out in self.validation_outputs])
+            all_vars = all_vars.to(torch.float64).cpu()
 
         self.log_dict(
             self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val"),
@@ -325,9 +331,13 @@ class LitPairedTextModel(L.LightningModule):
 
     def on_test_epoch_end(self):
         all_means = torch.cat([out["mean"] for out in self.test_outputs])
-        all_vars = torch.cat([out["var"] for out in self.test_outputs])
         all_means = all_means.to(torch.float64).cpu()
-        all_vars = all_vars.to(torch.float64).cpu()
+        
+        if self.test_outputs[0]["var"] is None:
+            all_vars = None
+        else:
+            all_vars = torch.cat([out["var"] for out in self.test_outputs])
+            all_vars = all_vars.to(torch.float64).cpu()
 
         if "labels" in self.test_outputs[0]:
             all_labels = torch.cat([out["labels"] for out in self.test_outputs])
@@ -340,7 +350,8 @@ class LitPairedTextModel(L.LightningModule):
                 sync_dist=True
             )
 
-        if self.approach != "basic":
+        if all_vars is not None:
+            # meaning that the model is probabilistic
             self._save_and_plot_uncertainty(self.test_outputs)
 
         self.test_outputs.clear()

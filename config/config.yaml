@@ -10,7 +10,7 @@ parent_log_dir: ./log
 n_trials: 1
 
 # seeds: [0, 42, 100, 999, 1234]
-seeds: [0]
+seeds: [0, 42]
 # plm_names: ["cross-encoder/stsb-roberta-large"]
 # plm_names: ["roberta-base", "roberta-base"]
 # plm_names: ["roberta-base"]
@@ -21,21 +21,20 @@ seeds: [0]
 # If delta is null (i.e, None), then we don't filter any samples
 delta: null
 
-error_decay_factor: 0.5
-loss_weight: 50.0
+error_decay_factor: 0.0
+loss_weight: 0.0 # penalty weight for non-SSL and unlabel_weight for SSL
 
-approach: cross-prob
-expt_name_postfix: 
-do_tune: True
+approach: cross-prob # options: basic, bi-prob, cross-prob
+expt_name_postfix: no-penalty
+do_tune: False
 do_train: True
-is_ssl: True
+
+is_ssl: False
 
 # Note: It's only the parent diretory like log/yyyymmdd_hhmmss_xx but nothing after that
-overwrite_parent_dir: log/20250217_092709_cross-prob_ssl_True-None 
+overwrite_parent_dir: null 
 
 # all files list that we can use for training / validation / testing
-article: data/NewsEmp2022/articles_adobe_AMT.csv
-
 2024:
     train: data/NewsEmp2024/trac3_EMP_train.csv
     train_llama: data/NewsEmp2024/trac3_EMP_train_llama.tsv
