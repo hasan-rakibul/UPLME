@@ -10,20 +10,20 @@ from transformers import AutoTokenizer, DataCollatorWithPadding
 from datasets import Dataset
 import logging
 
-from utils import log_info, log_debug, read_file
+from utils import log_info, log_debug, read_newsemp_file
 
 logger = logging.getLogger(__name__)
 
 pd.options.mode.copy_on_write = True # https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
 
-class PreprocessorFromRaw:
+class NewsEmpPreprocessorFromRaw:
     """
     Preprocess the raw data to the format that can be used in other data processing pipelines here.
     It does the minimum processing required for the data.
     """
     def __init__(
-            self,
-            delta: float
+        self,
+        delta: float | None
     ):
         self.delta = delta
         
@@ -40,11 +40,9 @@ class PreprocessorFromRaw:
         self, path: str, sanitise_labels: bool, add_noise: bool
     ) -> pd.DataFrame:
     
-        log_info(logger, f"\nReading data from {path}")
-        data = read_file(path)
-        
+        data = read_newsemp_file(path)
         log_info(logger, f"Read {len(data)} samples from {path}")
-
+        
         # if it is val of 2022 and 2023, the labels are separate files
         val_goldstandard_file = None
         if "WASSA23_essay_level_dev" in path:
@@ -89,9 +87,12 @@ class PreprocessorFromRaw:
         """
         assert self.label_column in data.columns, f"{self.label_column} column not found in the data"
         assert self.llm_column in data.columns, f"{self.llm_column} column not found in the data"
-        # Calculate the absolute difference between 'empathy' and 'llm_empathy'
-        condition = np.abs(data[self.label_column] - data[self.llm_column]) < self.delta
-        data = data[condition]
+        
+        if self.delta is not None:
+            # Calculate the absolute difference between 'empathy' and 'llm_empathy'
+            condition = np.abs(data[self.label_column] - data[self.llm_column]) < self.delta
+            data = data[condition]
+        
         data[self.label_column] = data[[self.label_column, self.llm_column]].mean(axis=1)
 
         data = data.drop(columns=[self.llm_column])
@@ -121,10 +122,10 @@ class PreprocessorFromRaw:
 
         return data
     
-    def process_data(self, data_path_list: list[str], sanitise_labels: bool, add_noise: bool):
+    def process_data(self, data_paths: list[str], sanitise_labels: bool, add_noise: bool):
         # we may combine the data from different versions
         all_data = pd.DataFrame()
-        for data_path in data_path_list:
+        for data_path in data_paths:
             data = self._raw_to_processed(
                 path=data_path,
                 sanitise_labels=sanitise_labels,
@@ -135,12 +136,6 @@ class PreprocessorFromRaw:
         log_info(logger, f"Total number of samples: {len(all_data)}\n")
         assert not all_data.isna().any().any(), "There are still NaN values in the data." # may occur due to the concat
         assert not all_data.isnull().any().any(), "The are still null values in the data"
-        
-        # add article information
-        article = read_file("data/NewsEmp2022/articles_adobe_AMT.csv")
-        all_data = pd.merge(all_data, article, on="article_id", how="left")
-        all_data.drop(columns=["article_id"], inplace=True)
-        all_data.rename(columns={"text": "article"}, inplace=True) # article was named as text in the file
 
         if self.llm_column in all_data.columns:
             all_data.drop(columns=[self.llm_column], inplace=True)
@@ -148,11 +143,16 @@ class PreprocessorFromRaw:
         all_data.rename(
             columns={
                 self.label_column: "labels", 
-                "article": "text_1", 
-                "essay": "text_2"
+                "essay": "text_1"
             },
             inplace=True
         )
+
+        # add article information
+        article = read_newsemp_file("data/NewsEmp2022/articles_adobe_AMT.csv")
+        all_data = pd.merge(all_data, article, on="article_id", how="left")
+        all_data.drop(columns=["article_id"], inplace=True)
+        all_data.rename(columns={"text": "text_2"}, inplace=True)
 
         return all_data
 
@@ -181,17 +181,17 @@ class BiEncoderDataCollator:
             final_batch["labels"] = torch.tensor(labels)
 
         return final_batch
-    
+
 class PairedTextDataModule:
     def __init__(
             self, 
             delta: float, 
-            tokeniser_plms: list[str]
+            tokeniser_plms: list[str],
+            approach: str
         ):
 
         self.delta = delta
-
-        self.data_preprocessor = PreprocessorFromRaw(delta=self.delta)
+        self.approach = approach
 
         # keeping them constant for now, can make them arguments if required
         self.feature_to_tokenise = ["text_1", "text_2"]
@@ -201,16 +201,16 @@ class PairedTextDataModule:
         self.tokeniser_plms = tokeniser_plms
 
         self.tokeniser = AutoTokenizer.from_pretrained(
-                self.tokeniser_plms[0],
-                use_fast=True,
-                add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
+            self.tokeniser_plms[0],
+            use_fast=True,
+            add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
         )
 
-        if len(self.tokeniser_plms) == 2:
+        if self.approach == "bi-encoder":
             self.tokeniser_extra = AutoTokenizer.from_pretrained(
-                    tokeniser_plms[1],
-                    use_fast=True,
-                    add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
+                self.tokeniser_plms[1],
+                use_fast=True,
+                add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
             )
 
             self.data_collator = BiEncoderDataCollator(tokeniser_1=self.tokeniser, tokeniser_2=self.tokeniser_extra)
@@ -246,18 +246,39 @@ class PairedTextDataModule:
             max_length=self.max_length
         )
 
-    def get_hf_data(self, data_path_list, have_label, mode, sanitise_labels, add_noise):
-        all_data = self.data_preprocessor.process_data(
-            data_path_list=data_path_list,
-            sanitise_labels=sanitise_labels,
-            add_noise=add_noise
-        )
+    def get_hf_data(self, data_paths: list[str], sanitise_newsemp_labels: bool, add_noise: bool, is_newsemp: bool = True):
+        if is_newsemp:
+            newsemp_preprocessor = NewsEmpPreprocessorFromRaw(delta=self.delta)
+            all_data = newsemp_preprocessor.process_data(
+                data_paths=data_paths,
+                sanitise_labels=sanitise_newsemp_labels,
+                add_noise=add_noise
+            )
+        else:
+            # doesn't require much processing, so done here
+            all_data = pd.DataFrame()
+            for data_path in data_paths:
+                data = pd.read_csv(data_path)
+                log_info(logger, f"Read {len(data)} samples from {data_path}")
+                all_data = pd.concat([all_data, data], ignore_index=True) if not all_data.empty else data
+            all_data["story_A"] = all_data["story_A"].str.replace("\n", "", regex=False)
+            all_data["story_B"] = all_data["story_B"].str.replace("\n", "", regex=False)
+            all_data.rename(
+                columns={
+                    "story_A": "text_1",
+                    "story_B": "text_2",
+                    "similarity_empathy_human_AGG": "labels"
+                },
+                inplace=True
+            )
+            all_data = all_data[["text_1", "text_2", "labels"]]
+            log_info(logger, f"Total number of EmpathicStories samples: {len(all_data)}\n")
 
         all_data_hf = Dataset.from_pandas(all_data, preserve_index=False) # convert to huggingface dataset
         
         # tokenise
         all_data_hf = all_data_hf.map(
-            self._tokeniser_bi_encoder if len(self.tokeniser_plms) == 2 else self._tokeniser_cross_encoder,
+            self._tokeniser_bi_encoder if self.approach == "bi-encoder" else self._tokeniser_cross_encoder,
             batched=True,
             remove_columns=self.feature_to_tokenise
         )
@@ -272,7 +293,11 @@ class PairedTextDataModule:
         np.random.seed(worker_seed)
         random.seed(worker_seed) 
     
-    def _get_dl(self, data_path_list, have_label, shuffle, mode, batch_size, sanitise_labels: bool, add_noise: bool, seed: int | None = None):
+    def _get_dl(
+            self, data_paths: list[str], shuffle: bool, batch_size: int, 
+            sanitise_newsemp_labels: bool, add_noise: bool, seed: int | None = None,
+            is_newsemp: bool = True
+        ):
 
         if shuffle:
             # making sure the shuffling is reproducible
@@ -280,8 +305,10 @@ class PairedTextDataModule:
             g.manual_seed(seed)
 
         hf_data = self.get_hf_data(
-            data_path_list=data_path_list, have_label=have_label, mode=mode,
-            sanitise_labels=sanitise_labels, add_noise=add_noise
+            data_paths=data_paths,
+            sanitise_newsemp_labels=sanitise_newsemp_labels,
+            add_noise=add_noise,
+            is_newsemp=is_newsemp
         )
 
         return DataLoader(
@@ -297,32 +324,38 @@ class PairedTextDataModule:
     
     def get_train_dl(
             self, data_path_list: list, batch_size: int,
-            sanitise_labels: bool = True, add_noise: bool = True, seed: int | None = None
+            sanitise_newsemp_labels: bool = True, add_noise: bool = False, seed: int | None = None,
+            is_newsemp: bool = True
         ):
         return self._get_dl(
-            data_path_list, have_label=True, shuffle=True, mode="train", 
-            batch_size=batch_size, sanitise_labels=sanitise_labels, add_noise=add_noise, seed=seed
+            data_path_list, shuffle=True, 
+            batch_size=batch_size, sanitise_newsemp_labels=sanitise_newsemp_labels, add_noise=add_noise, seed=seed,
+            is_newsemp=is_newsemp
         )
     
     def get_val_dl(
             self, data_path_list:list, batch_size: int, 
-            sanitise_labels: bool = True, add_noise: bool = False
+            sanitise_newsemp_labels: bool = True, add_noise: bool = False,
+            is_newsemp: bool = True
         ):
         # depending on data_name, the labels can be in different file
         return self._get_dl(
-            data_path_list, have_label=True, shuffle=False, mode="val", 
-            batch_size=batch_size, sanitise_labels=sanitise_labels, add_noise=add_noise
+            data_path_list, shuffle=False, 
+            batch_size=batch_size, sanitise_newsemp_labels=sanitise_newsemp_labels, add_noise=add_noise,
+            is_newsemp=is_newsemp
         )
     
     def get_test_dl(
-            self, data_path_list: list, batch_size: int = 32, have_label: bool = False,
-            sanitise_labels: bool = True, add_noise: bool = False
+            self, data_path_list: list, batch_size: int = 32,
+            sanitise_newsemp_labels: bool = True, add_noise: bool = False,
+            is_newsemp: bool = True
         ):
         return self._get_dl(
-            data_path_list, have_label=have_label, shuffle=False, mode="test", 
-            batch_size=batch_size, sanitise_labels=sanitise_labels, add_noise=add_noise
+            data_path_list, shuffle=False,
+            batch_size=batch_size, sanitise_newsemp_labels=sanitise_newsemp_labels, add_noise=add_noise,
+            is_newsemp=is_newsemp
         ) # we have labels in 2024 data
-    
+
 
 class DataModuleFromRaw:
     def __init__(self, delta: float, seed: int, tokeniser_plm: str = "roberta-base"):
@@ -392,7 +425,7 @@ class DataModuleFromRaw:
     
     def _raw_to_processed(self, path: str, have_label: bool, mode: str, sanitise_labels: bool, add_noise: bool) -> pd.DataFrame:
         log_info(logger, f"\nReading data from {path}")
-        data = read_file(path)
+        data = read_newsemp_file(path)
         
         log_info(logger, f"Read {len(data)} samples from {path}")
 

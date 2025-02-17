@@ -148,8 +148,8 @@ class LitPairedTextModel(L.LightningModule):
         log_dir: str,
         save_uc_metrics: bool,
         error_decay_factor: float,
-        loss_weights: list[float],
-        approach: str | None = None
+        loss_weight: float,
+        approach: str
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -161,6 +161,8 @@ class LitPairedTextModel(L.LightningModule):
             self.model = BiEncoderProbModel(plm_names=plm_names)
         elif self.approach == "cross-prob":
             self.model = CrossEncoderProbModel(plm_name=plm_names[0])
+        else:
+            raise ValueError(f"Invalid approach: {self.approach}")
 
         self.lr = lr
         self.num_training_steps = num_training_steps
@@ -169,14 +171,13 @@ class LitPairedTextModel(L.LightningModule):
         self.save_uc_metrics = save_uc_metrics
 
         self.error_decay_factor = error_decay_factor
-        self.loss_weights = loss_weights
+        self.loss_weight = loss_weight
+
+        self.penalty_type = "exp-decay"
 
         self.validation_outputs = []
         self.test_outputs = []
 
-    def forward(self, batch):
-        return self.model(batch)
-    
     def configure_optimizers(self):
         optimiser = torch.optim.AdamW(
             params=self.parameters(),
@@ -201,20 +202,25 @@ class LitPairedTextModel(L.LightningModule):
             }
         }
     
-    def _compute_penalty_loss(self, mean, var, labels) -> torch.Tensor:
+    def _compute_penalty_loss(self, mean: Tensor, var: Tensor, labels: Tensor) -> Tensor:
         errors = (mean - labels) ** 2
 
-        # exponential decay weighting
-        # When error is small, weight ~ exp(-alpha*small) ~ 1; when error is large, weight decays
-        weight = torch.exp(-self.error_decay_factor * errors)
+        if self.penalty_type == "exp-decay":
+            # exponential decay weighting
+            # When error is small, weight ~ exp(-alpha*small) ~ 1; when error is large, weight decays
+            weight = torch.exp(-self.error_decay_factor * errors)
+            var = var * weight
+            penalty_loss = torch.linalg.norm(var, ord=2) / var.numel()
+        elif self.penalty_type == "l1":
+            penalty_loss = torch.mean(torch.abs(var))
+        elif self.penalty_type == "var-error-prod":
+            penalty_loss = torch.mean(var * errors)
+        else:
+            raise ValueError(f"Invalid penalty type: {self.penalty_type}")
 
-        var = var * weight
-
-        penalty_loss = torch.linalg.norm(var, ord=2) / var.numel()
-
-        return self.loss_weights[0] * penalty_loss
+        return self.loss_weight[0] * penalty_loss
     
-    def _compute_and_log_loss_lbl(self, mean: torch.Tensor, var: torch.Tensor | None, labels: torch.Tensor, prefix: str):
+    def _compute_and_log_loss_lbl(self, mean: Tensor, var: Tensor | None, labels: Tensor, prefix: str):
         if var is None:
             # Basic model with MSE loss
             total_loss = F.mse_loss(mean, labels.squeeze())
@@ -233,12 +239,12 @@ class LitPairedTextModel(L.LightningModule):
         return total_loss
     
     def training_step(self, batch, batch_idx):
-        mean, var = self(batch)
+        mean, var = self.model(batch)
         loss = self._compute_and_log_loss_lbl(mean, var, batch["labels"], prefix="train")
         return loss
     
     def validation_step(self, batch, batch_idx):
-        mean, var = self(batch)
+        mean, var = self.model(batch)
         _ = self._compute_and_log_loss_lbl(mean, var, batch["labels"], prefix="val")
 
         self.validation_outputs.append({
@@ -302,7 +308,7 @@ class LitPairedTextModel(L.LightningModule):
         plot_uncertainy(output_dict, f"{self.log_dir}/uncertainty.pdf")
 
     def test_step(self, batch, batch_idx):
-        mean, var = self(batch)
+        mean, var = self.model(batch)
         
         outputs = {
             "mean": mean,
@@ -356,7 +362,7 @@ class PairedTextModelController(object):
         do_train: bool = True,
         do_test: bool = False,
         error_decay_factor: float = 0.5,
-        loss_weights: list[float] = [0],
+        loss_weight: float = 0.0,
         approach: str | None = None
     ):
         self.train_file = train_file
@@ -375,7 +381,7 @@ class PairedTextModelController(object):
         self.do_train = do_train
         self.do_test = do_test
         self.error_decay_factor = error_decay_factor
-        self.loss_weights = loss_weights
+        self.loss_weight = loss_weight
         self.approach = approach
 
         self.enable_early_stopping = True
@@ -397,6 +403,7 @@ class PairedTextModelController(object):
         self.dm = PairedTextDataModule(
             delta=self.delta,
             tokeniser_plms=self.plm_names,
+            approach=self.approach
         )
            
     def _prepare_trainer(self, curr_log_dir: str, extra_callbacks: list | None = None):
@@ -453,7 +460,7 @@ class PairedTextModelController(object):
         train_dl = self.dm.get_train_dl(
             data_path_list=self.train_file,
             batch_size=self.train_bsz,
-            sanitise_labels=True,
+            sanitise_newsemp_labels=True,
             add_noise=False,
             seed=seed
         )
@@ -461,7 +468,7 @@ class PairedTextModelController(object):
         val_dl = self.dm.get_val_dl(
             data_path_list=self.val_file,
             batch_size=self.eval_bsz,
-            sanitise_labels=False,
+            sanitise_newsemp_labels=False,
             add_noise=False
         )
 
@@ -488,7 +495,7 @@ class PairedTextModelController(object):
                     log_dir=curr_log_dir,
                     save_uc_metrics=self.save_uc_metrics,
                     error_decay_factor=self.error_decay_factor,
-                    loss_weights=self.loss_weights,
+                    loss_weight=self.loss_weight,
                     approach=self.approach
                 )
             
@@ -523,12 +530,12 @@ class PairedTextModelController(object):
         )
 
         test_dl = self.dm.get_test_dl(
-            data_path_list=self.test_file, batch_size=16, 
-            sanitise_labels=False, add_noise=False
+            data_path_list=self.test_file, batch_size=self.eval_bsz, 
+            sanitise_newsemp_labels=False, add_noise=False
         )
 
         with tester.init_module(empty_init=True):
-            model = LitPairedTextModel.load_from_checkpoint(model_path, save_uc_metrics=self.save_uc_metrics)
+            model = LitPairedTextModel.load_from_checkpoint(model_path)
 
         tester.test(model=model, dataloaders=test_dl, verbose=True)
 
@@ -575,8 +582,7 @@ class PairedTextModelController(object):
         self.train_bsz = trial.suggest_int("train_bsz", 8, 32, step=8)
 
         self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
-        penalty_weight = trial.suggest_float("penalty_weight", 0.0, 100.0)
-        self.loss_weights = [penalty_weight]
+        self.loss_weight = trial.suggest_float("loss_weight", 0.0, 100.0)
 
         pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_ccc")
         _, metrics = self._seed_wise_train_validate(
@@ -625,9 +631,12 @@ class PairedTextModelController(object):
             fig_imp.write_image(os.path.join(parent_log_dir, "Optuna_param_importances.pdf"))
 
             # update the parameters and retrain
-            self.lr = best_trial.params["lr"]
-            self.train_bsz = best_trial.params["train_bsz"]
-            self.error_decay_factor = best_trial.params["error_decay_factor"]
-            self.loss_weights = [best_trial.params["penalty_weight"]]
+            # self.lr = best_trial.params["lr"]
+            # self.train_bsz = best_trial.params["train_bsz"]
+            # self.error_decay_factor = best_trial.params["error_decay_factor"]
+            # self.loss_weights = [best_trial.params["penalty_weight"]]
+            
+            for key, value in best_trial.params.items():
+                setattr(self, key, value)
         
         self.train_test(seeds=seeds, parent_log_dir=parent_log_dir)

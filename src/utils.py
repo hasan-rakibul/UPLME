@@ -1,7 +1,9 @@
 import os
 import datetime
 import logging
+import numpy as np
 import pandas as pd
+import torch
 import glob
 from omegaconf import OmegaConf
 import warnings
@@ -9,6 +11,10 @@ import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.utilities import rank_zero_only
 from lightning.pytorch.loggers import WandbLogger
+
+import matplotlib.pyplot as plt
+import scienceplots
+plt.style.use(['science', 'tableau-colorblind10'])
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -33,6 +39,25 @@ class DelayedStartEarlyStopping(EarlyStopping):
         if (self.start_epoch is not None) and (trainer.current_epoch < self.start_epoch):
             return
         super().on_validation_end(trainer, l_module)
+
+def plot_uncertainy(data: dict, save_as: str) -> None:
+    mean = data.get("mean", 0)
+    unc = np.sqrt(data.get("var", 0))
+    labels = data.get("labels", 0)
+    # noise = data.get("noise", 0)
+
+    _, ax = plt.subplots(1, 1)
+    sc = ax.scatter(labels, mean, c=unc, cmap="coolwarm")
+    # ax.errorbar(labels, mean, yerr=unc, fmt='o', alpha=0.5)
+    ax.set_xlabel("True")
+    ax.set_ylabel("Predicted")
+    
+    cbar = plt.colorbar(sc)
+    cbar.set_label("Uncertainty")
+
+    plt.savefig(save_as)
+    plt.close()
+    log_info(logger, f"Saved plot at {save_as}")
 
 def get_trainer(
         config, devices="auto", extra_callbacks=None, enable_checkpointing=True, enable_early_stopping=True,
@@ -106,7 +131,7 @@ def get_trainer(
 
     return trainer
 
-def read_file(file_path: str) -> pd.DataFrame:
+def read_newsemp_file(file_path: str) -> pd.DataFrame:
     if file_path.endswith(".tsv"):
         df = pd.read_csv(file_path, sep='\t', na_values="unknown") # some column includes "unknown"
     elif file_path.endswith(".csv"):
@@ -192,7 +217,7 @@ def log_info(logger, msg):
 def log_debug(logger, msg):
     logger.debug(msg)
 
-def retrieve_file_names(config: OmegaConf) -> tuple[list, list, list]:
+def retrieve_newsemp_file_names(config: OmegaConf) -> tuple[list, list, list]:
     llm = "llama"
     train_attr = f"train_{llm}"
     val_attr = f"val_{llm}"

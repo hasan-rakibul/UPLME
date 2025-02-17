@@ -22,15 +22,16 @@ seeds: [0]
 delta: null
 
 error_decay_factor: 0.5
-loss_weights: [50]
+loss_weight: 50.0
 
 approach: cross-prob
-expt_name_postfix: with-penalty
-do_tune: False
-do_train: False
+expt_name_postfix: 
+do_tune: True
+do_train: True
+is_ssl: True
 
-# for testing-only, directory just before seed_xx is enough as it will go through all the seeds
-overwrite_parent_dir: log/20250212_102117_cross-prob-roberta-base_just-nll_original-val-test 
+# Note: It's only the parent diretory like log/yyyymmdd_hhmmss_xx but nothing after that
+overwrite_parent_dir: log/20250217_092709_cross-prob_ssl_True-None 
 
 # all files list that we can use for training / validation / testing
 article: data/NewsEmp2022/articles_adobe_AMT.csv

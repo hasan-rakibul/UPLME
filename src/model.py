@@ -20,15 +20,12 @@ logger = logging.getLogger(__name__)
 class ProbabilisticPLM(torch.nn.Module):
     def __init__(
         self,
-        plm_name: str,
-        lr: float
+        plm_name: str
     ):
         super().__init__()
         self.plm = AutoModel.from_pretrained(plm_name)
         self.fc_m = torch.nn.Linear(768, 1)
         self.fc_v = torch.nn.Linear(768, 1)
-
-        self.lr = lr
 
         self.min_score = 1.0
         self.max_score = 7.0
@@ -64,7 +61,7 @@ class LitProbabilisticPLMSingle(L.LightningModule):
         self.save_hyperparameters()
 
         if len(plm_names) == 1:
-            self.model = ProbabilisticPLM(plm_name=plm_names[0], lr=lr)
+            self.model = ProbabilisticPLM(plm_name=plm_names[0])
 
         self.lr = lr
         self.num_training_steps = num_training_steps
@@ -272,7 +269,7 @@ class LitProbabilisticPLMEnsemble(LitProbabilisticPLMSingle):
         self.save_hyperparameters()
 
         self.model = torch.nn.ModuleList([
-            ProbabilisticPLM(plm_name=plm, lr=lr) for plm in plm_names
+            ProbabilisticPLM(plm_name=plm) for plm in plm_names
         ])
         
         self.loss_weights = loss_weights

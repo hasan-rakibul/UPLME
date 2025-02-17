@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 from functools import partial
 import lightning as L
 
-from utils import log_info, log_debug, get_trainer, prepare_train_config, resolve_num_steps
+from utils import log_info, log_debug, get_trainer, retrieve_newsemp_file_names, resolve_num_steps
 from preprocess import DataModuleFromRaw
 from model import LitProbabilisticPLMSingle, LitProbabilisticPLMEnsemble
 
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     config = OmegaConf.merge(config_common, config_hparam)
 
     config.expt_name_postfix = args.expt_name
-    config = prepare_train_config(config, approach=args.approach)
+    config = retrieve_newsemp_file_names(config, approach=args.approach)
 
     if args.resume_dir is not None:
         storage = f"sqlite:///{args.resume_dir}/optuna.db"

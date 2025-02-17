@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 import glob
 import torch
 
-from utils import log_info, resolve_logging_dir, process_seedwise_metrics, prepare_train_config, get_trainer, resolve_num_steps
+from utils import log_info, resolve_logging_dir, process_seedwise_metrics, retrieve_newsemp_file_names, get_trainer, resolve_num_steps
 from model import LitBasicPLM, LitProbabilisticPLMSingle, LitProbabilisticPLMEnsemble
 from preprocess import DataModuleFromRaw
 from evaluation import ModelEvaluator
@@ -185,7 +185,7 @@ if __name__ == "__main__":
 
     config.expt_name_postfix = args.expt_name
 
-    config = prepare_train_config(config, approach=args.approach)
+    config = retrieve_newsemp_file_names(config, approach=args.approach)
 
     if args.debug:
         config.debug_mode = True
