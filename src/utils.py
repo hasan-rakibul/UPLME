@@ -233,10 +233,6 @@ def retrieve_newsemp_file_names(config: OmegaConf) -> tuple[list, list, list]:
     val_file_list = [getattr(config[config.val_data], val_attr)]
     test_file_list = [getattr(config[config.val_data], test_attr)]
 
-    log_info(logger, f"Train data: {train_file_list}")
-    log_info(logger, f"Val data: {val_file_list}")
-    log_info(logger, f"Test data: {test_file_list}")
-
     return train_file_list, val_file_list, test_file_list
 
 def prepare_test_config(config: OmegaConf) -> OmegaConf:

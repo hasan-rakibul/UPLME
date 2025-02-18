@@ -62,7 +62,6 @@ class NewsEmpPreprocessorFromRaw:
 
         selected_data = data[[col for col in self.columns_to_keep if col in data.columns]] # keep only the columns that are in the data
 
-        # if have_label and (mode == "val" or mode == "test"):
         if sanitise_labels:
             log_info(logger, f"Santitising labels of {path} file.\n")
             selected_data = self._label_fix(selected_data)
@@ -272,7 +271,7 @@ class PairedTextDataModule:
                 inplace=True
             )
             all_data = all_data[["text_1", "text_2", "labels"]]
-            log_info(logger, f"Total number of EmpathicStories samples: {len(all_data)}\n")
+            log_info(logger, f"Total number of samples: {len(all_data)}\n")
 
         all_data_hf = Dataset.from_pandas(all_data, preserve_index=False) # convert to huggingface dataset
         

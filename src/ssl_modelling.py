@@ -154,7 +154,7 @@ class SSLModelController(PairedTextModelController):
             sanitise_newsemp_labels=True,
             add_noise=False,
             seed=seed,
-            is_newsemp=True
+            is_newsemp=self.is_newsemp_main
         )
         train_dl_unlbl = self.dm.get_train_dl(
             data_path_list=self.unlbl_data_files,
@@ -162,7 +162,7 @@ class SSLModelController(PairedTextModelController):
             sanitise_newsemp_labels=False,
             add_noise=False,
             seed=seed,
-            is_newsemp=False
+            is_newsemp=not self.is_newsemp_main # opposite of the main data
         )
 
         train_dl = CombinedLoader({"lbl": train_dl_lbl, "unlbl": train_dl_unlbl}, mode="max_size_cycle")
@@ -170,19 +170,12 @@ class SSLModelController(PairedTextModelController):
         # according to https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.utilities.combined_loader.html
         _ = iter(train_dl)
 
-        val_dl = self.dm.get_val_dl(
-            data_path_list=self.val_file,
-            batch_size=self.eval_bsz,
-            sanitise_newsemp_labels=True,
-            add_noise=False,
-            is_newsemp=True
-        )
-
-        trainer = self._prepare_trainer(curr_log_dir=curr_log_dir, extra_callbacks=extra_callbacks)
         num_batches = len(train_dl)
         num_training_steps = num_batches * self.num_epochs
         num_warmup_steps = int(self.warmup_ratio * num_batches * 10) # 10 epochs, like the RoBERTa paper
 
+        trainer = self._prepare_trainer(curr_log_dir=curr_log_dir, extra_callbacks=extra_callbacks)
+        
         # https://lightning.ai/docs/pytorch/stable/advanced/model_init.html
         if os.path.exists(curr_log_dir) and not self.do_tune:
             log_info(logger, f"Seed-level logging directory already exists: {curr_log_dir}. So, validating on the saved ckpt...")
@@ -208,7 +201,7 @@ class SSLModelController(PairedTextModelController):
             trainer.fit(
                 model=model,
                 train_dataloaders=train_dl,
-                val_dataloaders=val_dl
+                val_dataloaders=self.val_dl
             )
 
             # getting the best model from the trainer
@@ -219,7 +212,7 @@ class SSLModelController(PairedTextModelController):
         with trainer.init_module(empty_init=True):
             model = LitSSLModel.load_from_checkpoint(best_model_ckpt)
 
-        trainer.validate(model=model, dataloaders=val_dl)
+        trainer.validate(model=model, dataloaders=self.val_dl)
 
         metrics = {key: value.item() for key, value in trainer.callback_metrics.items()}
 
@@ -235,15 +228,10 @@ class SSLModelController(PairedTextModelController):
             max_epochs=1
         )
 
-        test_dl = self.dm.get_test_dl(
-            data_path_list=self.test_file, batch_size=self.eval_bsz, 
-            sanitise_newsemp_labels=False, add_noise=False
-        )
-
         with tester.init_module(empty_init=True):
             model = LitSSLModel.load_from_checkpoint(model_path)
 
-        tester.test(model=model, dataloaders=test_dl, verbose=True)
+        tester.test(model=model, dataloaders=self.test_dl, verbose=True)
 
         metrics = {key: value.item() for key, value in tester.callback_metrics.items()}
         

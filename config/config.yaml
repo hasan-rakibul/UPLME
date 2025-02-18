@@ -1,3 +1,5 @@
+# these are just to retrieve the correct file names for newsemp dataset.
+# actual train and val data depends on main_data
 train_data: [2024, 2022]
 val_data: 2024 # test would be same as val_data as in in-sample setting
 
@@ -11,11 +13,8 @@ n_trials: 1
 
 # seeds: [0, 42, 100, 999, 1234]
 seeds: [0, 42]
-# plm_names: ["cross-encoder/stsb-roberta-large"]
-# plm_names: ["roberta-base", "roberta-base"]
-# plm_names: ["roberta-base"]
-# plm_names: ["roberta-base", "cardiffnlp/twitter-roberta-base-sentiment-latest"]
-# plm: siebert/sentiment-roberta-large-english
+
+main_data: empstories # options: newsemp, empstories
 
 # Only keep samples if the difference between 'empathy' and 'llm_empathy' < delta
 # If delta is null (i.e, None), then we don't filter any samples
@@ -24,8 +23,8 @@ delta: null
 error_decay_factor: 0.0
 loss_weight: 0.0 # penalty weight for non-SSL and unlabel_weight for SSL
 
-approach: cross-prob # options: basic, bi-prob, cross-prob
-expt_name_postfix: no-penalty
+approach: basic # options: basic, bi-prob, cross-prob
+expt_name_postfix: 
 do_tune: False
 do_train: True
 

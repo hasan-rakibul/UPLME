@@ -9,7 +9,6 @@ from transformers import (
 from torchmetrics.functional import pearson_corrcoef, concordance_corrcoef, mean_squared_error, spearman_corrcoef
 import logging
 import numpy as np
-
 import os
 import glob
 
@@ -22,10 +21,8 @@ from optuna.integration import PyTorchLightningPruningCallback
 import plotly # required for optuna.visualisation
 from functools import partial
 
-from utils import log_info, process_seedwise_metrics, DelayedStartEarlyStopping 
 from preprocess import PairedTextDataModule
-
-from utils import log_info, plot_uncertainy
+from utils import log_info, plot_uncertainy, process_seedwise_metrics, DelayedStartEarlyStopping 
 from util_uncertainty_metrics import calculate_unc_metrics 
 
 logger = logging.getLogger(__name__)
@@ -359,9 +356,9 @@ class LitPairedTextModel(L.LightningModule):
 class PairedTextModelController(object):
     def __init__(
         self,
-        train_file: list[str],
-        val_file: list[str],
-        test_file: list[str],
+        labelled_train_files: list[str],
+        val_files: list[str],
+        test_files: list[str],
         lr: float,
         train_bsz: int,
         eval_bsz: int,
@@ -374,11 +371,12 @@ class PairedTextModelController(object):
         do_test: bool = False,
         error_decay_factor: float = 0.5,
         loss_weight: float = 0.0,
-        approach: str | None = None
+        approach: str | None = None,
+        main_data: str = "newsemp"
     ):
-        self.train_file = train_file
-        self.val_file = val_file
-        self.test_file = test_file
+        self.train_file = labelled_train_files
+        self.val_file = val_files
+        self.test_file = test_files
          
         self.lr = lr
         self.train_bsz = train_bsz
@@ -401,6 +399,7 @@ class PairedTextModelController(object):
         self.save_uc_metrics = False
         self.warmup_ratio = 0.06
 
+        # other plm options: cardiffnlp/twitter-roberta-base-sentiment-latest, siebert/sentiment-roberta-large-english
         if self.approach == "basic":
             self.plm_names = ["roberta-base"]
         elif self.approach == "bi-prob":
@@ -416,6 +415,23 @@ class PairedTextModelController(object):
             tokeniser_plms=self.plm_names,
             approach=self.approach
         )
+
+        # train_dl is seed-dependent, so it's created in the seed-wise training
+        self.is_newsemp_main = (main_data == "newsemp")
+        if self.do_train or self.do_tune:
+            self.val_dl = self.dm.get_val_dl(
+                data_path_list=self.val_file,
+                batch_size=self.eval_bsz,
+                sanitise_newsemp_labels=False,
+                add_noise=False,
+                is_newsemp=self.is_newsemp_main
+            )
+        if self.do_test:
+            self.test_dl = self.dm.get_test_dl(
+                data_path_list=self.test_file, batch_size=self.eval_bsz, 
+                sanitise_newsemp_labels=False, add_noise=False,
+                is_newsemp=self.is_newsemp_main
+            )
            
     def _prepare_trainer(self, curr_log_dir: str, extra_callbacks: list | None = None):
         callbacks = []
@@ -473,14 +489,8 @@ class PairedTextModelController(object):
             batch_size=self.train_bsz,
             sanitise_newsemp_labels=True,
             add_noise=False,
-            seed=seed
-        )
-
-        val_dl = self.dm.get_val_dl(
-            data_path_list=self.val_file,
-            batch_size=self.eval_bsz,
-            sanitise_newsemp_labels=False,
-            add_noise=False
+            seed=seed,
+            is_newsemp=self.is_newsemp_main
         )
 
         trainer = self._prepare_trainer(curr_log_dir=curr_log_dir, extra_callbacks=extra_callbacks)
@@ -513,7 +523,7 @@ class PairedTextModelController(object):
             trainer.fit(
                 model=model,
                 train_dataloaders=train_dl,
-                val_dataloaders=val_dl
+                val_dataloaders=self.val_dl
             )
 
             # getting the best model from the trainer
@@ -524,7 +534,7 @@ class PairedTextModelController(object):
         with trainer.init_module(empty_init=True):
             model = LitPairedTextModel.load_from_checkpoint(best_model_ckpt)
 
-        trainer.validate(model=model, dataloaders=val_dl)
+        trainer.validate(model=model, dataloaders=self.val_dl)
 
         metrics = {key: value.item() for key, value in trainer.callback_metrics.items()}
 
@@ -540,15 +550,10 @@ class PairedTextModelController(object):
             max_epochs=1
         )
 
-        test_dl = self.dm.get_test_dl(
-            data_path_list=self.test_file, batch_size=self.eval_bsz, 
-            sanitise_newsemp_labels=False, add_noise=False
-        )
-
         with tester.init_module(empty_init=True):
             model = LitPairedTextModel.load_from_checkpoint(model_path)
 
-        tester.test(model=model, dataloaders=test_dl, verbose=True)
+        tester.test(model=model, dataloaders=self.test_dl, verbose=True)
 
         metrics = {key: value.item() for key, value in tester.callback_metrics.items()}
         

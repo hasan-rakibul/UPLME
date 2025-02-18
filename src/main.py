@@ -38,22 +38,34 @@ if __name__ == "__main__":
     approach = config.approach
     expt_name_postfix = config.expt_name_postfix
     debug = args.debug
+    main_data = config.main_data
 
     is_ssl = config.is_ssl
-    unlbl_data_files = [
-        "data/EmpathicStories/PAIRS (train).csv", 
-        "data/EmpathicStories/PAIRS (dev).csv", 
-        "data/EmpathicStories/PAIRS (test).csv"
-    ]
+
+    newsemp_train_files, newsemp_val_files, newsemp_test_files = retrieve_newsemp_file_names(config)
+    empstories_train_files = ["data/EmpathicStories/PAIRS (train).csv"]
+    empstories_val_files = ["data/EmpathicStories/PAIRS (dev).csv"]
+    empstories_test_files = ["data/EmpathicStories/PAIRS (test).csv"]
+    if main_data == "newsemp":
+        labelled_train_files = newsemp_train_files
+        val_files = newsemp_val_files
+        test_files = newsemp_test_files
+        unlbl_data_files = empstories_train_files + empstories_val_files + empstories_test_files
+    elif main_data == "empstories":
+        labelled_train_files = empstories_train_files
+        val_files = empstories_val_files
+        test_files = empstories_test_files
+        unlbl_data_files = newsemp_train_files + newsemp_val_files + newsemp_test_files
+    else:
+        raise ValueError("main_data should be either newsemp or empstories")
+    log_info(logger, f"Train data: {labelled_train_files}\tVal data: {val_files}\tTest data: {test_files}")
 
     if not do_tune and not do_train and (overwrite_parent_dir is None):
         raise ValueError("Assuming you want to test only, please provide the overwrite_log_dir")
 
-    expt_name = f'{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}_{approach}_ssl_{is_ssl}'
+    expt_name = f'{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}_{main_data}_{approach}_ssl-{is_ssl}'
     if expt_name_postfix is not None:
         expt_name += f"-{expt_name_postfix}"
-
-    train_file_list, val_file_list, test_file_list = retrieve_newsemp_file_names(config)
 
     if overwrite_parent_dir is not None:
         log_info(logger, f"Using overwrite_logging_dir {overwrite_parent_dir}")
@@ -77,9 +89,9 @@ if __name__ == "__main__":
 
     if is_ssl:
         modelling = SSLModelController(
-            train_file=train_file_list,
-            val_file=val_file_list,
-            test_file=test_file_list,
+            labelled_train_files=labelled_train_files,
+            val_files=val_files,
+            test_files=test_files,
             lr=lr,
             train_bsz=train_bsz,
             eval_bsz=eval_bsz,
@@ -93,13 +105,14 @@ if __name__ == "__main__":
             error_decay_factor=error_decay_factor,
             loss_weight=loss_weight,
             approach=approach,
+            main_data=main_data,
             unlbl_data_files=unlbl_data_files
         )
     else:
         modelling = PairedTextModelController(
-            train_file=train_file_list,
-            val_file=val_file_list,
-            test_file=test_file_list,
+            labelled_train_files=labelled_train_files,
+            val_files=val_files,
+            test_files=test_files,
             lr=lr,
             train_bsz=train_bsz,
             eval_bsz=eval_bsz,
@@ -112,7 +125,8 @@ if __name__ == "__main__":
             do_test=True, # automatically, not done during hyperparameter tuning
             error_decay_factor=error_decay_factor,
             loss_weight=loss_weight,
-            approach=approach
+            approach=approach,
+            main_data=main_data
         )
 
     modelling.tune_train_test(
