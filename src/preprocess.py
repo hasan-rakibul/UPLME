@@ -4,6 +4,7 @@ import pandas as pd
 import os
 
 import torch
+import importlib
 from torch.utils.data import DataLoader
 
 from transformers import AutoTokenizer, DataCollatorWithPadding
@@ -186,11 +187,11 @@ class PairedTextDataModule:
             self, 
             delta: float, 
             tokeniser_plms: list[str],
-            approach: str
+            is_separate_tokeniser: bool
         ):
 
         self.delta = delta
-        self.approach = approach
+        self.is_separate_tokeniser = is_separate_tokeniser
 
         # keeping them constant for now, can make them arguments if required
         self.feature_to_tokenise = ["text_1", "text_2"]
@@ -205,7 +206,7 @@ class PairedTextDataModule:
             add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
         )
 
-        if self.approach == "bi-encoder":
+        if self.is_separate_tokeniser:
             self.tokeniser_extra = AutoTokenizer.from_pretrained(
                 self.tokeniser_plms[1],
                 use_fast=True,
@@ -245,39 +246,95 @@ class PairedTextDataModule:
             max_length=self.max_length
         )
 
-    def get_hf_data(self, data_paths: list[str], sanitise_newsemp_labels: bool, add_noise: bool, is_newsemp: bool = True):
+    def get_hf_data(
+            self, data_paths: list[str], sanitise_newsemp_labels: bool, 
+            add_noise: bool, is_newsemp: bool = True, do_augment: bool = False
+        ):
+        if do_augment:
+            from textattack.augmentation import (
+                # CLAREAugmenter, # requires tensorflow, which causing some issues with rocm GPU
+                # BackTranslationAugmenter,
+                # EmbeddingAugmenter, # time consuming, 3130 samples would take 24+ hours
+                # EasyDataAugmenter # consist of four augmenters
+                WordNetAugmenter
+            )
+        def _augment_and_combine(data: pd.DataFrame) -> pd.DataFrame:
+            augmenters = [
+                # CLAREAugmenter()
+                # EmbeddingAugmenter(
+                #     pct_words_to_swap=0.25,
+                #     transformations_per_example=2
+                # )
+                WordNetAugmenter(
+                    pct_words_to_swap=0.1,
+                    transformations_per_example=1
+                )
+
+            ]
+
+            augm_data_list = []
+            for augmenter in augmenters:
+                augm_text_1 = augmenter.augment_many(data["text_1"].tolist(), show_progress=True)
+                augm_text_2 = augmenter.augment_many(data["text_2"].tolist(), show_progress=True)
+                # each of the above returns list[list[str]], so we need to flatten them
+                for each_text_1_variants, each_text_2_variants, label in zip(augm_text_1, augm_text_2, data["labels"].tolist()):
+                    for text_1, text_2 in zip(each_text_1_variants, each_text_2_variants):
+                        augm_data_list.append((text_1, text_2, label))
+
+            # augm_data_list is list[tuple[str, str, float]] with a len of transformations_per_example * len(data)
+            data_augms = pd.DataFrame(augm_data_list, columns=["text_1", "text_2", "labels"])
+            data = pd.concat([data, data_augms], ignore_index=True)
+            return data
+        
         if is_newsemp:
-            newsemp_preprocessor = NewsEmpPreprocessorFromRaw(delta=self.delta)
-            all_data = newsemp_preprocessor.process_data(
-                data_paths=data_paths,
-                sanitise_labels=sanitise_newsemp_labels,
-                add_noise=add_noise
-            )
+            save_as = "data/newsemp_train_augmented.tsv" if do_augment else "data/newsemp_train.tsv"
         else:
-            # doesn't require much processing, so done here
-            all_data = pd.DataFrame()
-            for data_path in data_paths:
-                data = pd.read_csv(data_path)
-                log_info(logger, f"Read {len(data)} samples from {data_path}")
-                all_data = pd.concat([all_data, data], ignore_index=True) if not all_data.empty else data
-            all_data["story_A"] = all_data["story_A"].str.replace("\n", "", regex=False)
-            all_data["story_B"] = all_data["story_B"].str.replace("\n", "", regex=False)
-            all_data.rename(
-                columns={
-                    "story_A": "text_1",
-                    "story_B": "text_2",
-                    "similarity_empathy_human_AGG": "labels"
-                },
-                inplace=True
-            )
-            all_data = all_data[["text_1", "text_2", "labels"]]
-            log_info(logger, f"Total number of samples: {len(all_data)}\n")
+            save_as = "data/empstories_train_augmented.tsv" if do_augment else "data/empstories_train.tsv"
+
+        if os.path.exists(save_as):
+            log_info(logger, f"Reading data from {save_as}")
+            all_data = pd.read_csv(save_as, sep='\t')
+            log_info(logger, f"Read {len(all_data)} samples from {save_as}")
+        else:
+            log_info(logger, f"Data not found at {save_as}. Processing from scratch.")
+            if is_newsemp:
+                newsemp_preprocessor = NewsEmpPreprocessorFromRaw(delta=self.delta)
+                all_data = newsemp_preprocessor.process_data(
+                    data_paths=data_paths,
+                    sanitise_labels=sanitise_newsemp_labels,
+                    add_noise=add_noise
+                )
+            else:
+                # doesn't require much processing, so done here
+                all_data = pd.DataFrame()
+                for data_path in data_paths:
+                    data = pd.read_csv(data_path)
+                    log_info(logger, f"Read {len(data)} samples from {data_path}")
+                    all_data = pd.concat([all_data, data], ignore_index=True) if not all_data.empty else data
+                all_data["story_A"] = all_data["story_A"].str.replace("\n", "", regex=False)
+                all_data["story_B"] = all_data["story_B"].str.replace("\n", "", regex=False)
+                all_data.rename(
+                    columns={
+                        "story_A": "text_1",
+                        "story_B": "text_2",
+                        "similarity_empathy_human_AGG": "labels"
+                    },
+                    inplace=True
+                )
+                all_data = all_data[["text_1", "text_2", "labels"]]
+                log_info(logger, f"Total number of samples: {len(all_data)}\n")
+
+            if do_augment:
+                all_data = _augment_and_combine(all_data)
+
+            all_data.to_csv(save_as, sep='\t', index=False)
+            log_info(logger, f"Saved the data to {save_as}")
 
         all_data_hf = Dataset.from_pandas(all_data, preserve_index=False) # convert to huggingface dataset
         
         # tokenise
         all_data_hf = all_data_hf.map(
-            self._tokeniser_bi_encoder if self.approach == "bi-encoder" else self._tokeniser_cross_encoder,
+            self._tokeniser_bi_encoder if self.is_separate_tokeniser else self._tokeniser_cross_encoder,
             batched=True,
             remove_columns=self.feature_to_tokenise
         )
@@ -295,7 +352,7 @@ class PairedTextDataModule:
     def _get_dl(
             self, data_paths: list[str], shuffle: bool, batch_size: int, 
             sanitise_newsemp_labels: bool, add_noise: bool, seed: int | None = None,
-            is_newsemp: bool = True
+            is_newsemp: bool = True, do_augment: bool = False
         ):
 
         if shuffle:
@@ -307,7 +364,8 @@ class PairedTextDataModule:
             data_paths=data_paths,
             sanitise_newsemp_labels=sanitise_newsemp_labels,
             add_noise=add_noise,
-            is_newsemp=is_newsemp
+            is_newsemp=is_newsemp,
+            do_augment=do_augment
         )
 
         return DataLoader(
@@ -329,7 +387,7 @@ class PairedTextDataModule:
         return self._get_dl(
             data_path_list, shuffle=True, 
             batch_size=batch_size, sanitise_newsemp_labels=sanitise_newsemp_labels, add_noise=add_noise, seed=seed,
-            is_newsemp=is_newsemp
+            is_newsemp=is_newsemp, do_augment=True
         )
     
     def get_val_dl(
