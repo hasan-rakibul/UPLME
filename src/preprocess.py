@@ -2,6 +2,7 @@ import random
 import numpy as np
 import pandas as pd
 import os
+from tqdm import tqdm
 
 import torch
 import importlib
@@ -252,51 +253,122 @@ class PairedTextDataModule:
         ):
         if do_augment:
             from textattack.augmentation import (
-                # CLAREAugmenter, # requires tensorflow, which causing some issues with rocm GPU
+                # CLAREAugmenter, # was causing some issues with rocm GPU
                 # BackTranslationAugmenter,
                 # EmbeddingAugmenter, # time consuming, 3130 samples would take 24+ hours
                 # EasyDataAugmenter # consist of four augmenters
                 WordNetAugmenter
             )
-        def _augment_and_combine(data: pd.DataFrame) -> pd.DataFrame:
-            augmenters = [
+        def _augment_combine_save(data: pd.DataFrame | None, save_as: str) -> pd.DataFrame:
+            """
+            save_path to save or load the whole data
+            if loaded, we don't need data
+            """
+            if os.path.exists(save_as):
+                data = pd.read_csv(save_as, sep="\t")
+
+                # if all are augmented, then we don't need to do anything
+                if data[data["is_augmented"] == False].empty:
+                    log_info(logger, f"All the samples are augmented, so no need to augment further.")
+                    return data
+            else:
+                data["is_augmented"] = False
+
                 # CLAREAugmenter()
                 # EmbeddingAugmenter(
                 #     pct_words_to_swap=0.25,
                 #     transformations_per_example=2
                 # )
-                WordNetAugmenter(
-                    pct_words_to_swap=0.1,
-                    transformations_per_example=1
-                )
-
-            ]
+            augmenter = WordNetAugmenter(
+                pct_words_to_swap=0.1,
+                transformations_per_example=1
+            )
 
             augm_data_list = []
-            for augmenter in augmenters:
-                augm_text_1 = augmenter.augment_many(data["text_1"].tolist(), show_progress=True)
-                augm_text_2 = augmenter.augment_many(data["text_2"].tolist(), show_progress=True)
-                # each of the above returns list[list[str]], so we need to flatten them
-                for each_text_1_variants, each_text_2_variants, label in zip(augm_text_1, augm_text_2, data["labels"].tolist()):
-                    for text_1, text_2 in zip(each_text_1_variants, each_text_2_variants):
-                        augm_data_list.append((text_1, text_2, label))
+            counter = 0
+            # for idx, row in data[data["is_augmented"] == False].iterrows():
+            for row in tqdm(data[data["is_augmented"] == False].itertuples(), 
+                            total=len(data[data["is_augmented"] == False]), 
+                            desc="Augmenting"):
+                idx = row.Index
+                augm_text_1 = augmenter.augment(row.text_1)
+                augm_text_2 = augmenter.augment(row.text_2)
 
-            # augm_data_list is list[tuple[str, str, float]] with a len of transformations_per_example * len(data)
-            data_augms = pd.DataFrame(augm_data_list, columns=["text_1", "text_2", "labels"])
-            data = pd.concat([data, data_augms], ignore_index=True)
+                # Note: if transform_per_example > 1, we could also permute to get more samples
+
+                for text_1, text_2 in zip(augm_text_1, augm_text_2):
+                    augm_data_list.append({
+                        "text_1": text_1,
+                        "text_2": text_2,
+                        "labels": row["labels"],
+                        "is_augmented": np.nan # These are nan because we don't want to augment them again
+                    })
+
+                data.at[idx, "is_augmented"] = True # mark the original as augmented
+                counter += 1
+
+                if counter % 5 == 0:
+                    data_augms = pd.DataFrame(augm_data_list)
+                    data = pd.concat([data, data_augms], ignore_index=True)
+                    data.to_csv(save_as, sep="\t", index=False)
+                    log_info(logger, f"Saved the data to {save_as}")
+                    augm_data_list = [] # clear the list
+
+            if len(augm_data_list) > 0:
+                # save the remaining at the end
+                data_augms = pd.DataFrame(augm_data_list)
+                data = pd.concat([data, data_augms], ignore_index=True)
+                data.to_csv(save_as, sep="\t", index=False)
+                log_info(logger, f"Saved the data to {save_as}")
+
             return data
-        
-        if is_newsemp:
-            save_as = "data/newsemp_train_augmented.tsv" if do_augment else "data/newsemp_train.tsv"
-        else:
-            save_as = "data/empstories_train_augmented.tsv" if do_augment else "data/empstories_train.tsv"
 
-        if os.path.exists(save_as):
-            log_info(logger, f"Reading data from {save_as}")
-            all_data = pd.read_csv(save_as, sep='\t')
-            log_info(logger, f"Read {len(all_data)} samples from {save_as}")
+        if do_augment:
+            filenames = [os.path.splitext(os.path.basename(path))[0]
+                         for path in data_paths]
+            save_as = os.path.join(
+                os.path.commonpath(data_paths),
+                f"{'_'.join(filenames)}_augmented.tsv"
+            )
+
+            if os.path.exists(save_as):
+                log_info(logger, f"Reading data from {save_as}")
+                # Now it can be either augmentation done or need to be resumed
+                # so calling the augmenter again
+                all_data = _augment_combine_save(data=None, save_as=save_as)
+                log_info(logger, f"Read {len(all_data)} samples from {save_as}")
+            else:
+                log_info(logger, f"No saved augmented data found as {save_as}. Processing from scratch.")
+                if is_newsemp:
+                    newsemp_preprocessor = NewsEmpPreprocessorFromRaw(delta=self.delta)
+                    all_data = newsemp_preprocessor.process_data(
+                        data_paths=data_paths,
+                        sanitise_labels=sanitise_newsemp_labels,
+                        add_noise=add_noise
+                    )
+                else:
+                    # doesn't require much processing, so done here
+                    all_data = pd.DataFrame()
+                    for data_path in data_paths:
+                        data = pd.read_csv(data_path)
+                        log_info(logger, f"Read {len(data)} samples from {data_path}")
+                        all_data = pd.concat([all_data, data], ignore_index=True) if not all_data.empty else data
+                    all_data["story_A"] = all_data["story_A"].str.replace("\n", "", regex=False)
+                    all_data["story_B"] = all_data["story_B"].str.replace("\n", "", regex=False)
+                    all_data.rename(
+                        columns={
+                            "story_A": "text_1",
+                            "story_B": "text_2",
+                            "similarity_empathy_human_AGG": "labels"
+                        },
+                        inplace=True
+                    )
+                    all_data = all_data[["text_1", "text_2", "labels"]]
+                    log_info(logger, f"Total number of samples: {len(all_data)}\n")
+                    
+                    all_data = _augment_combine_save(all_data, save_as=save_as)
         else:
-            log_info(logger, f"Data not found at {save_as}. Processing from scratch.")
+            log_info(logger, "Processing from scratch without any augmentation.")
             if is_newsemp:
                 newsemp_preprocessor = NewsEmpPreprocessorFromRaw(delta=self.delta)
                 all_data = newsemp_preprocessor.process_data(
@@ -324,11 +396,8 @@ class PairedTextDataModule:
                 all_data = all_data[["text_1", "text_2", "labels"]]
                 log_info(logger, f"Total number of samples: {len(all_data)}\n")
 
-            if do_augment:
-                all_data = _augment_and_combine(all_data)
-
-            all_data.to_csv(save_as, sep='\t', index=False)
-            log_info(logger, f"Saved the data to {save_as}")
+        
+        # the remaining processing like convertint to hf
 
         all_data_hf = Dataset.from_pandas(all_data, preserve_index=False) # convert to huggingface dataset
         

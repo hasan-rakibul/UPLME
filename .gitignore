@@ -6,6 +6,9 @@ src/archived/**
 src/ucvme/**
 data/**
 
+#generated from hydra
+outputs/** 
+
 .declare_api_key.sh
 analysis-and-visualisation.ipynb
 
