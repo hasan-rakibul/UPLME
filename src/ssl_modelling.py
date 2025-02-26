@@ -28,50 +28,79 @@ class LitSSLModel(LitPairedTextModel):
         else:
             raise ValueError(f"Invalid or not-implemented approach: {self.approach}")
         
-        self.hparams.error_decay_factor = None # No penalty is added here yet
-        self.penalty_type = None
+        # self.hparams.error_decay_factor = None # No penalty is added here yet
+        # self.penalty_type = None
 
-    def _compute_and_log_loss_lbl(self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, labels: Tensor, prefix: str):
-        l2_var = torch.linalg.norm(var_1 - var_2, ord=2)
+    def _compute_and_log_loss_lbl(
+            self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, 
+            labels: Tensor, prefix: str
+        ) -> Tensor:
+        # l2_var = torch.linalg.norm(var_1 - var_2, ord=2)
 
-        nll_1 = F.gaussian_nll_loss(mean_1, labels.squeeze(), var_1)
-        nll_2 = F.gaussian_nll_loss(mean_2, labels.squeeze(), var_2)
-        nll = 0.5 * (nll_1 + nll_2)
+        # var_consistency = F.mse_loss(var_1, var_2)
 
-        loss = l2_var + nll
+        mean = 0.5 * (mean_1 + mean_2)
+        var = 0.5 * (var_1 + var_2)
+        nll = F.gaussian_nll_loss(mean, labels.squeeze(), var)
+        
+        # nll_1 = F.gaussian_nll_loss(mean_1, labels.squeeze(), var_1)
+        # nll_2 = F.gaussian_nll_loss(mean_2, labels.squeeze(), var_2)
+        # nll = 0.5 * (nll_1 + nll_2)
+
+        # var_consistency = self._compute_penalty_loss(mean, var, labels)
+
+        # loss = var_consistency + nll
+        loss = nll
 
         loss_dict = {
-            f"{prefix}_l2_var": l2_var,
-            f"{prefix}_nll": nll,
+            # f"{prefix}_var_consistency": var_consistency,
+            # f"{prefix}_nll": nll,
             f"{prefix}_loss": loss
         }
-        self.log_dict(loss_dict, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log_dict(
+            loss_dict, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True,
+            batch_size=labels.shape[0]
+        )
 
         return loss
 
-    def _compute_and_log_loss_unlbl(self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, prefix: str):
+    def _compute_and_log_loss_unlbl(
+            self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, 
+            prefix: str
+        ) -> Tensor:
         # cons_12 = F.kl_div(F.log_softmax(mean_1, dim=-1), F.softmax(mean_2, dim=-1), reduction="batchmean")
         # cons_21 = F.kl_div(F.log_softmax(mean_2, dim=-1), F.softmax(mean_1, dim=-1), reduction="batchmean")
 
-        l2_var = torch.linalg.norm(var_1 - var_2, ord=2)
+        # l2_var = torch.linalg.norm(var_1 - var_2, ord=2)
 
-        nll_1 = F.gaussian_nll_loss(mean_1, mean_2, var_1)
-        nll_2 = F.gaussian_nll_loss(mean_2, mean_1, var_2)
-        nll = 0.5 * (nll_1 + nll_2)
+        # mean = 0.5 * (mean_1 + mean_2)
+        # var = 0.5 * (var_1 + var_2)
+        # loss = F.kl_div(F.log_softmax(mean_1, dim=1), F.softmax(mean_2, dim=1), reduction="batchmean")
+        # loss = F.gaussian_nll_loss(mean_1, mean, var) + F.gaussian_nll_loss(mean_2, mean, var)
+        # var_consistency = F.mse_loss(var_1, avg_var) + F.mse_loss(var_2, avg_var)
 
-        loss = l2_var + nll
+        nll_1 = torch.mean(torch.exp(-var_2) * F.gaussian_nll_loss(mean_1, mean_2, var_1, reduction="none"))
+        nll_2 = torch.mean(torch.exp(-var_1) * F.gaussian_nll_loss(mean_2, mean_1, var_2, reduction="none"))
+        loss = 0.5 * (nll_1 + nll_2)
+
+        # if nll.detach().item() < 0:
+        #     import pdb; pdb.set_trace()
+        # loss = var_consistency + nll
 
         loss_dict = {
-            f"{prefix}_l2_var": l2_var,
-            f"{prefix}_nll": nll,
+            # f"{prefix}_var_consistency": var_consistency,
+            # f"{prefix}_nll": nll,
             f"{prefix}_loss": loss
         }
-        self.log_dict(loss_dict, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log_dict(
+            loss_dict, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True,
+            batch_size=mean_1.shape[0]
+        )
 
         return loss
 
     def training_step(self, batch: dict, batch_idx):
-        batch_lbl = batch["lbl"]
+        batch_lbl = batch["lbl"] 
         batch_unlbl = batch["unlbl"]
 
         mean_1_lbl, var_1_lbl = self.model_1(batch_lbl)
@@ -84,6 +113,7 @@ class LitSSLModel(LitPairedTextModel):
             var_1=var_1_lbl, var_2=var_2_lbl, 
             labels=batch_lbl["labels"], prefix="train_lbl"
         )
+        
         loss_unlbl = self._compute_and_log_loss_unlbl(
             mean_1=mean_1_unlbl, mean_2=mean_2_unlbl, 
             var_1=var_1_unlbl, var_2=var_2_unlbl, 
@@ -91,6 +121,11 @@ class LitSSLModel(LitPairedTextModel):
         )
 
         loss = loss_lbl + self.loss_weight * loss_unlbl
+        self.log(
+            "train_total_loss", loss, 
+            on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True,
+            batch_size=batch_lbl["labels"].shape[0]
+        )
         return loss
     
     def validation_step(self, batch: dict, batch_idx):
@@ -105,7 +140,7 @@ class LitSSLModel(LitPairedTextModel):
 
         mean = 0.5 * (mean_1 + mean_2)
         var = 0.5 * (var_1 + var_2)
-
+        
         self.validation_outputs.append({
             "mean": mean,
             "var": var,
@@ -167,13 +202,6 @@ class SSLModelController(PairedTextModelController):
 
         train_dl = CombinedLoader({"lbl": train_dl_lbl, "unlbl": train_dl_unlbl}, mode="max_size_cycle")
 
-        # according to https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.utilities.combined_loader.html
-        _ = iter(train_dl)
-
-        num_batches = len(train_dl)
-        num_training_steps = num_batches * self.num_epochs
-        num_warmup_steps = int(self.warmup_ratio * num_batches * 10) # 10 epochs, like the RoBERTa paper
-
         trainer = self._prepare_trainer(curr_log_dir=curr_log_dir, extra_callbacks=extra_callbacks)
         
         # https://lightning.ai/docs/pytorch/stable/advanced/model_init.html
@@ -183,14 +211,12 @@ class SSLModelController(PairedTextModelController):
             assert len(ckpt_list) == 1, f"Number of ckpt is not 1."
             best_model_ckpt = ckpt_list[0]
         else:
-            log_info(logger, f"Training from scratch")  
+            log_info(logger, f"Training ...")  
             with trainer.init_module():
                 # model created here directly goes to GPU
                 model = LitSSLModel(
                     plm_names=self.plm_names,
                     lr=self.lr,
-                    num_training_steps=num_training_steps,
-                    num_warmup_steps=num_warmup_steps,
                     log_dir=curr_log_dir,
                     save_uc_metrics=self.save_uc_metrics,
                     error_decay_factor=self.error_decay_factor,

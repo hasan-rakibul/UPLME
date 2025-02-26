@@ -13,7 +13,7 @@ import os
 import glob
 
 import lightning as L
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
 from lightning.pytorch.loggers import WandbLogger
 
 import optuna
@@ -22,10 +22,44 @@ import plotly # required for optuna.visualisation
 from functools import partial
 
 from preprocess import PairedTextDataModule
-from utils import log_info, plot_uncertainy, process_seedwise_metrics, DelayedStartEarlyStopping 
-from util_uncertainty_metrics import calculate_unc_metrics 
+from utils import log_info, plot_uncertainy, process_seedwise_metrics, DelayedStartEarlyStopping, log_debug 
+from util_uncertainty_metrics import calculate_unc_metrics
 
 logger = logging.getLogger(__name__)
+
+class SiameseModel(torch.nn.Module):
+    def __init__(self, plm_name: str):
+        super().__init__()
+        self.pooling = "mean"
+        
+        self.plm = AutoModel.from_pretrained(plm_name)
+
+    def forward(self, batch):
+        output_1 = self.plm(
+            input_ids=batch['input_ids_1'],
+            attention_mask=batch['attention_mask_1']
+        )
+        output_2 = self.plm(
+            input_ids=batch['input_ids_2'],
+            attention_mask=batch['attention_mask_2']
+        )
+
+        if self.pooling == "mean":
+            attn_1 = batch['attention_mask_1']
+            attn_2 = batch['attention_mask_2']
+            sentence_representation_1 = (output_1.last_hidden_state * attn_1.unsqueeze(-1)).sum(-2) / attn_1.sum(dim=-1).unsqueeze(-1)
+            sentence_representation_2 = (output_2.last_hidden_state * attn_2.unsqueeze(-1)).sum(-2) / attn_2.sum(dim=-1).unsqueeze(-1)
+        elif self.pooling == "cls":
+            sentence_representation_1 = output_1.last_hidden_state[:, 0, :]
+            sentence_representation_2 = output_2.last_hidden_state[:, 0, :]
+        elif self.pooling == "roberta-pooler":
+            sentence_representation_1 = output_1.pooler_output
+            sentence_representation_2 = output_2.pooler_output
+        
+        cos_sim = F.cosine_similarity(sentence_representation_1, sentence_representation_2)
+        
+        return cos_sim, None # there's no variance being modelled, just return None for compatibility
+
 
 class BiEncoderProbModel(torch.nn.Module):
     def __init__(
@@ -40,9 +74,6 @@ class BiEncoderProbModel(torch.nn.Module):
         self.fc_concat = torch.nn.Linear(1536, 768)
         self.fc_m = torch.nn.Linear(768, 1)
         self.fc_v = torch.nn.Linear(768, 1)
-
-        self.min_score = 1.0
-        self.max_score = 7.0
 
     def forward(self, batch):
         output_1 = self.plm_1(
@@ -140,8 +171,6 @@ class LitPairedTextModel(L.LightningModule):
         self,
         plm_names: list[str],
         lr: float,
-        num_training_steps: int,
-        num_warmup_steps: int,
         log_dir: str,
         save_uc_metrics: bool,
         error_decay_factor: float,
@@ -152,8 +181,10 @@ class LitPairedTextModel(L.LightningModule):
         self.save_hyperparameters()
 
         self.approach = approach
-        if self.approach == "basic":
+        if self.approach == "cross-basic":
             self.model = CrossEncoderBasicModel(plm_name=plm_names[0])
+        elif self.approach == "siamese":
+            self.model = SiameseModel(plm_name=plm_names[0])
         elif self.approach == "bi-prob":
             self.model = BiEncoderProbModel(plm_names=plm_names)
         elif self.approach == "cross-prob":
@@ -162,8 +193,6 @@ class LitPairedTextModel(L.LightningModule):
             raise ValueError(f"Invalid approach: {self.approach}")
 
         self.lr = lr
-        self.num_training_steps = num_training_steps
-        self.num_warmup_steps = num_warmup_steps
         self.log_dir = log_dir
         self.save_uc_metrics = save_uc_metrics
 
@@ -184,18 +213,31 @@ class LitPairedTextModel(L.LightningModule):
             weight_decay=0.1
         )
 
+        # Caution: self.trainer.num_training_batchs is inf if train_dataloader is not loaded
+        # calculating num_training_steps using self.trainer.estimated_stepping_batches loads the train_dataloader
+        # so, the below code "in the following order" is important
+        num_training_steps = self.trainer.estimated_stepping_batches
+        num_warmup_steps = int(0.03 * num_training_steps)
+        # moved to 3% from 6% as I doubled the number of steps (epochs) compared to RoBERTa paper
+        
+        # RoBERTa paper used 10 epoch for fine-tuning, so I can calculate the number of warmup steps using 10 epochs
+        # Also note num_training_batch is inf if I only set max_steps without max_epochs (I guess)
+        # num_warmup_steps = int(0.06 * self.trainer.num_training_batches * 10)
+        
+        log_info(logger, f"Num training steps: {num_training_steps}")
+        log_info(logger, f"Num warmup steps: {num_warmup_steps}")
         lr_scheduler = get_linear_schedule_with_warmup(
             optimiser,
-            num_warmup_steps=self.num_warmup_steps,
-            num_training_steps=self.num_training_steps
+            num_training_steps=num_training_steps,
+            num_warmup_steps=num_warmup_steps
         )
-        
+
         return {
             "optimizer": optimiser,
             "lr_scheduler": {
                 "scheduler": lr_scheduler,
-                "monitor": "val_loss",
-                "frequency": 1
+                "interval": "step",
+                "frequency": 1 
             }
         }
     
@@ -363,6 +405,7 @@ class PairedTextModelController(object):
         train_bsz: int,
         eval_bsz: int,
         num_epochs: int,
+        max_steps: int,
         delta: float,
         expt_name: str,
         debug: bool,
@@ -381,7 +424,8 @@ class PairedTextModelController(object):
         self.lr = lr
         self.train_bsz = train_bsz
         self.eval_bsz = eval_bsz
-        self.num_epochs = num_epochs
+        # self.num_epochs = num_epochs
+        self.max_steps = max_steps
 
         self.delta = delta
         self.expt_name = expt_name
@@ -397,11 +441,13 @@ class PairedTextModelController(object):
         self.early_stopping_start_epoch = 5
         self.enable_checkpointing = True
         self.save_uc_metrics = False
-        self.warmup_ratio = 0.06
 
         # other plm options: cardiffnlp/twitter-roberta-base-sentiment-latest, siebert/sentiment-roberta-large-english
-        if self.approach == "basic":
+        if self.approach == "cross-basic":
+            # self.plm_names = ["cross-encoder/stsb-roberta-base"]
             self.plm_names = ["roberta-base"]
+        elif self.approach == "siamese":
+            self.plm_names = ["facebook/bart-base"]
         elif self.approach == "bi-prob":
             self.plm_names = ["roberta-base", "roberta-base"]
         elif self.approach == "cross-prob":
@@ -413,7 +459,7 @@ class PairedTextModelController(object):
         self.dm = PairedTextDataModule(
             delta=self.delta,
             tokeniser_plms=self.plm_names,
-            approach=self.approach
+            is_separate_tokeniser=True if self.approach in ["bi-prob", "siamese"] else False
         )
 
         # train_dl is seed-dependent, so it's created in the seed-wise training
@@ -451,11 +497,16 @@ class PairedTextModelController(object):
 
         if self.enable_checkpointing:            
             checkpoint = ModelCheckpoint(
-                save_top_k=1 # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
+                save_top_k=1, # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
+                monitor="val_ccc",
+                mode="max"
             )
             
             callbacks.append(checkpoint)
-            
+
+        lr_monitor = LearningRateMonitor()
+        callbacks.append(lr_monitor)
+
         callbacks.extend(extra_callbacks) if extra_callbacks else None
 
         wandb_logger = WandbLogger(
@@ -466,7 +517,8 @@ class PairedTextModelController(object):
         )
 
         trainer = L.Trainer(
-            max_epochs=self.num_epochs,
+            # max_epochs=self.num_epochs,
+            max_steps=self.max_steps,
             default_root_dir=curr_log_dir,
             deterministic=True,
             logger=wandb_logger,
@@ -495,9 +547,6 @@ class PairedTextModelController(object):
 
         trainer = self._prepare_trainer(curr_log_dir=curr_log_dir, extra_callbacks=extra_callbacks)
 
-        num_training_steps = len(train_dl) * self.num_epochs
-        num_warmup_steps = int(self.warmup_ratio * len(train_dl) * 10) # 10 epochs of warmup calculation, like the RoBERTa paper
-
         # https://lightning.ai/docs/pytorch/stable/advanced/model_init.html
         if os.path.exists(curr_log_dir) and not self.do_tune:
             log_info(logger, f"Seed-level logging directory already exists: {curr_log_dir}. So, validating on the saved ckpt...")
@@ -505,14 +554,12 @@ class PairedTextModelController(object):
             assert len(ckpt_list) == 1, f"Number of ckpt is not 1."
             best_model_ckpt = ckpt_list[0]
         else:
-            log_info(logger, f"Training from scratch")  
+            log_info(logger, f"Training ...")  
             with trainer.init_module():
                 # model created here directly goes to GPU
                 model = LitPairedTextModel(
                     plm_names=self.plm_names,
                     lr=self.lr,
-                    num_training_steps=num_training_steps,
-                    num_warmup_steps=num_warmup_steps,
                     log_dir=curr_log_dir,
                     save_uc_metrics=self.save_uc_metrics,
                     error_decay_factor=self.error_decay_factor,

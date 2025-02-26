@@ -3,32 +3,35 @@
 train_data: [2024, 2022]
 val_data: 2024 # test would be same as val_data as in in-sample setting
 
+debug: False
+
 num_epochs: 20
+max_steps: 4000
 lr: 3.0e-5
 train_bsz: 16
 eval_bsz: 16
 parent_log_dir: ./log
 
-n_trials: 1
+n_trials: 10
 
 # seeds: [0, 42, 100, 999, 1234]
-seeds: [0, 42]
+seeds: [0]
 
-main_data: empstories # options: newsemp, empstories
+main_data: newsemp # options: newsemp, empstories
 
 # Only keep samples if the difference between 'empathy' and 'llm_empathy' < delta
 # If delta is null (i.e, None), then we don't filter any samples
 delta: null
 
 error_decay_factor: 0.0
-loss_weight: 0.0 # penalty weight for non-SSL and unlabel_weight for SSL
+loss_weight: 0.1 # penalty weight for non-SSL and unlabel_weight for SSL
 
-approach: basic # options: basic, bi-prob, cross-prob
-expt_name_postfix: 
+approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
+expt_name_postfix: null
 do_tune: False
 do_train: True
 
-is_ssl: False
+is_ssl: True 
 
 # Note: It's only the parent diretory like log/yyyymmdd_hhmmss_xx but nothing after that
 overwrite_parent_dir: null 

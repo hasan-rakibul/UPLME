@@ -1,10 +1,10 @@
-# python 3.12.3
 transformers
 datasets
 lightning
 pandas
 matplotlib
 scienceplots
+hydra-core
 omegaconf
 # ipykernel # for jupyter notebook
 # scipy
@@ -16,3 +16,6 @@ optuna
 optuna-integration[pytorch-lightning]
 plotly # for visualisation
 kaleido # for visualisation
+
+textattack
+sacremoses # recommended by textattack
