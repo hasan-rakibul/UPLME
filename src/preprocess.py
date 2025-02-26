@@ -300,7 +300,7 @@ class PairedTextDataModule:
                     augm_data_list.append({
                         "text_1": text_1,
                         "text_2": text_2,
-                        "labels": row["labels"],
+                        "labels": row.labels,
                         "is_augmented": np.nan # These are nan because we don't want to augment them again
                     })
 
