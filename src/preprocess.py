@@ -259,6 +259,25 @@ class PairedTextDataModule:
                 # EasyDataAugmenter # consist of four augmenters
                 WordNetAugmenter
             )
+        def _normalise_nullable_bool(x: str) -> bool | np.ndarray:
+            if pd.isna(x):
+                return np.nan
+            try:
+                f = float(x)
+                if f == 1.0:
+                    return True
+                elif f == 0.0:
+                    return False
+                else:
+                    raise ValueError 
+            except (ValueError, TypeError):
+                if str(x).strip().lower() == "true":
+                    return True
+                elif str(x).strip().lower() == "false":
+                    return False
+                else:
+                    raise ValueError(f"Value {x} is not converted properly to a valid nullable boolean value.")
+
         def _augment_combine_save(data: pd.DataFrame | None, save_as: str) -> pd.DataFrame:
             """
             save_path to save or load the whole data
@@ -266,10 +285,11 @@ class PairedTextDataModule:
             """
             if os.path.exists(save_as):
                 data = pd.read_csv(save_as, sep="\t")
-
                 # if all are augmented, then we don't need to do anything
+                # While saving, the True/False is converted to string "1.0"/"0.0", so converting back
+                data["is_augmented"] = data["is_augmented"].apply(_normalise_nullable_bool)
                 if data[data["is_augmented"] == False].empty:
-                    log_info(logger, f"All the samples are augmented, so no need to augment further.")
+                    log_info(logger, f"All the samples are augmented, so not trying to augment further.")
                     return data
             else:
                 data["is_augmented"] = False
