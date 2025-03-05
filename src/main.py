@@ -19,7 +19,7 @@ def main(cfg: DictConfig):
     
     # things coming from the config
     seeds = cfg.seeds
-    num_epochs = cfg.num_epochs
+    # num_epochs = cfg.num_epochs
     lr = cfg.lr
     train_bsz = cfg.train_bsz
     eval_bsz = cfg.eval_bsz
@@ -27,7 +27,6 @@ def main(cfg: DictConfig):
     n_trials = cfg.n_trials
     parent_log_dir = cfg.parent_log_dir
     error_decay_factor = cfg.error_decay_factor
-    loss_weight = cfg.loss_weight
     do_tune = cfg.do_tune
     do_train = cfg.do_train
     overwrite_parent_dir = cfg.overwrite_parent_dir
@@ -75,7 +74,9 @@ def main(cfg: DictConfig):
         log_info(logger, "Debug mode")
         logger.setLevel(logging.DEBUG)
         seeds = seeds[:2] # reduce the number of seeds for debugging
-        num_epochs = 2
+        # num_epochs = 2
+        cfg.max_steps = 50
+        cfg.val_check_interval = 5
         n_trials = 2
         parent_log_dir = "./log/debug"
         expt_name = "debug"
@@ -91,8 +92,9 @@ def main(cfg: DictConfig):
             lr=lr,
             train_bsz=train_bsz,
             eval_bsz=eval_bsz,
-            num_epochs=num_epochs,
+            # num_epochs=num_epochs,
             max_steps=cfg.max_steps,
+            val_check_interval=cfg.val_check_interval,
             delta=delta,
             expt_name=expt_name,
             debug=debug,
@@ -100,7 +102,9 @@ def main(cfg: DictConfig):
             do_train=do_train,
             do_test=True, # automatically, not done during hyperparameter tuning
             error_decay_factor=error_decay_factor,
-            loss_weight=loss_weight,
+            lambda_1=cfg.lambda_1,
+            lambda_2=cfg.lambda_2,
+            lambda_3=cfg.lambda_3,
             approach=approach,
             main_data=main_data,
             unlbl_data_files=unlbl_data_files
@@ -113,8 +117,9 @@ def main(cfg: DictConfig):
             lr=lr,
             train_bsz=train_bsz,
             eval_bsz=eval_bsz,
-            num_epochs=num_epochs,
+            # num_epochs=num_epochs,
             max_steps=cfg.max_steps,
+            val_check_interval=cfg.val_check_interval,
             delta=delta,
             expt_name=expt_name,
             debug=debug,
@@ -122,7 +127,7 @@ def main(cfg: DictConfig):
             do_train=do_train,
             do_test=True, # automatically, not done during hyperparameter tuning
             error_decay_factor=error_decay_factor,
-            loss_weight=loss_weight,
+            lambda_1=cfg.lambda_1,
             approach=approach,
             main_data=main_data
         )

@@ -13,8 +13,8 @@ from lightning.pytorch.utilities import rank_zero_only
 from lightning.pytorch.loggers import WandbLogger
 
 import matplotlib.pyplot as plt
-import scienceplots
-plt.style.use(['science', 'tableau-colorblind10'])
+# import scienceplots
+# plt.style.use(['science', 'tableau-colorblind10']) # causing some issues with 'cmr10.tfm' file while using pytorch module from setonix
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',

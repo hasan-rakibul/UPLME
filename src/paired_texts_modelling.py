@@ -174,7 +174,7 @@ class LitPairedTextModel(L.LightningModule):
         log_dir: str,
         save_uc_metrics: bool,
         error_decay_factor: float,
-        loss_weight: float,
+        lambda_1: float,
         approach: str
     ):
         super().__init__()
@@ -197,7 +197,7 @@ class LitPairedTextModel(L.LightningModule):
         self.save_uc_metrics = save_uc_metrics
 
         self.error_decay_factor = error_decay_factor
-        self.loss_weight = loss_weight
+        self.lambda_1 = lambda_1
 
         self.penalty_type = "exp-decay"
 
@@ -257,9 +257,9 @@ class LitPairedTextModel(L.LightningModule):
         else:
             raise ValueError(f"Invalid penalty type: {self.penalty_type}")
 
-        return self.loss_weight * penalty_loss
+        return self.lambda_1 * penalty_loss
     
-    def _compute_and_log_loss_lbl(self, mean: Tensor, var: Tensor | None, labels: Tensor, prefix: str):
+    def _compute_and_log_loss(self, mean: Tensor, var: Tensor | None, labels: Tensor, prefix: str):
         if var is None:
             # Basic model with MSE loss
             total_loss = F.mse_loss(mean, labels.squeeze())
@@ -270,21 +270,21 @@ class LitPairedTextModel(L.LightningModule):
             
             total_loss = nll_loss + penalty_loss
 
-            self.log(f"{prefix}_nll_loss", nll_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
-            self.log(f"{prefix}_penalty_loss", penalty_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+            self.log(f"{prefix}_nll_loss", nll_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
+            self.log(f"{prefix}_penalty_loss", penalty_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
 
-        self.log(f"{prefix}_total_loss", total_loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
+        self.log(f"{prefix}_total_loss", total_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
 
         return total_loss
     
     def training_step(self, batch, batch_idx):
         mean, var = self.model(batch)
-        loss = self._compute_and_log_loss_lbl(mean, var, batch["labels"], prefix="train")
+        loss = self._compute_and_log_loss(mean, var, batch["labels"], prefix="train")
         return loss
     
     def validation_step(self, batch, batch_idx):
         mean, var = self.model(batch)
-        _ = self._compute_and_log_loss_lbl(mean, var, batch["labels"], prefix="val")
+        _ = self._compute_and_log_loss(mean, var, batch["labels"], prefix="val")
 
         self.validation_outputs.append({
             "mean": mean,
@@ -404,8 +404,9 @@ class PairedTextModelController(object):
         lr: float,
         train_bsz: int,
         eval_bsz: int,
-        num_epochs: int,
+        # num_epochs: int,
         max_steps: int,
+        val_check_interval: int | float,
         delta: float,
         expt_name: str,
         debug: bool,
@@ -413,7 +414,7 @@ class PairedTextModelController(object):
         do_train: bool = True,
         do_test: bool = False,
         error_decay_factor: float = 0.5,
-        loss_weight: float = 0.0,
+        lambda_1: float = 0.0,
         approach: str | None = None,
         main_data: str = "newsemp"
     ):
@@ -426,6 +427,7 @@ class PairedTextModelController(object):
         self.eval_bsz = eval_bsz
         # self.num_epochs = num_epochs
         self.max_steps = max_steps
+        self.val_check_interval = val_check_interval
 
         self.delta = delta
         self.expt_name = expt_name
@@ -434,7 +436,7 @@ class PairedTextModelController(object):
         self.do_train = do_train
         self.do_test = do_test
         self.error_decay_factor = error_decay_factor
-        self.loss_weight = loss_weight
+        self.lambda_1 = lambda_1
         self.approach = approach
 
         self.enable_early_stopping = True
@@ -483,14 +485,22 @@ class PairedTextModelController(object):
         callbacks = []
 
         if self.enable_early_stopping:
-            early_stopping = DelayedStartEarlyStopping(
-                start_epoch=self.early_stopping_start_epoch,
+            # early_stopping = DelayedStartEarlyStopping(
+            #     start_epoch=self.early_stopping_start_epoch,
+            #     monitor="val_ccc",
+            #     patience=2,
+            #     mode="max",
+            #     min_delta=0,
+            #     verbose=True
+            # )
+            early_stopping = EarlyStopping(
                 monitor="val_ccc",
-                patience=2,
+                patience=5,
                 mode="max",
                 min_delta=0,
                 verbose=True
             )
+
             callbacks.append(early_stopping)
         else:
             log_info(logger, "Early stopping disabled")
@@ -518,6 +528,8 @@ class PairedTextModelController(object):
 
         trainer = L.Trainer(
             # max_epochs=self.num_epochs,
+            val_check_interval=self.val_check_interval,
+            check_val_every_n_epoch=None, # eniirely steps-based validation
             max_steps=self.max_steps,
             default_root_dir=curr_log_dir,
             deterministic=True,
@@ -563,7 +575,7 @@ class PairedTextModelController(object):
                     log_dir=curr_log_dir,
                     save_uc_metrics=self.save_uc_metrics,
                     error_decay_factor=self.error_decay_factor,
-                    loss_weight=self.loss_weight,
+                    lambda_1=self.lambda_1,
                     approach=self.approach
                 )
             
@@ -645,7 +657,7 @@ class PairedTextModelController(object):
         self.train_bsz = trial.suggest_int("train_bsz", 8, 32, step=8)
 
         self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
-        self.loss_weight = trial.suggest_float("loss_weight", 0.0, 100.0)
+        self.lambda_1 = trial.suggest_float("loss_weight", 0.0, 100.0)
 
         pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_ccc")
         _, metrics = self._seed_wise_train_validate(

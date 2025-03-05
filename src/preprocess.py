@@ -383,8 +383,7 @@ class PairedTextDataModule:
                         },
                         inplace=True
                     )
-                    all_data = all_data[["text_1", "text_2", "labels"]]
-                    log_info(logger, f"Total number of samples: {len(all_data)}\n")
+                    all_data = all_data[["text_1", "text_2", "labels"]] #FIXME: can be removed later as we filter the columns later
                     
                     all_data = _augment_combine_save(all_data, save_as=save_as)
         else:
@@ -413,9 +412,12 @@ class PairedTextDataModule:
                     },
                     inplace=True
                 )
-                all_data = all_data[["text_1", "text_2", "labels"]]
-                log_info(logger, f"Total number of samples: {len(all_data)}\n")
+        
+        all_data = all_data[["text_1", "text_2", "labels"]]
+        log_info(logger, f"Total number of samples: {len(all_data)}\n")
 
+        assert not all_data.isna().any().any(), "There are still NaN values in the data."
+        assert not all_data.isnull().any().any(), "The are still null values in the data"
         
         # the remaining processing like convertint to hf
 

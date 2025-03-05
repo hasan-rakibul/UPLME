@@ -8,5 +8,11 @@
 #SBATCH --gres=gpu:1
 #SBATCH --account=pawsey1001-gpu
 
-export TOKENIZERS_PARALLELISM=false
-python src/main.py
+module load pytorch/2.2.0-rocm5.7.3
+
+singularity exec $SINGULARITY_CONTAINER bash -c "\
+source $MYSOFTWARE/.venv/bin/activate && \
+export TOKENIZERS_PARALLELISM=false && \
+python src/main.py \
+expt_name_postfix='kldiv-loss-tune' \
+debug=True "

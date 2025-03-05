@@ -23,5 +23,5 @@ if [ "$partition" == "gpu" ] || [ "$partition" == "gpu-dev" ] || [ "$partition" 
     num_gpus=${num_gpus:-8}
     salloc -N 1 --gres=gpu:$num_gpus -A $account --partition=$partition --time=$max_walltime
 else
-    salloc -N 1 --ntasks=1 --cpus-per-task=$num_cpus -A $account --time=$max_walltime
+    salloc -N 1 --ntasks=1 --cpus-per-task=$num_cpus -A $account #--time=$max_walltime #TODO: this max time seems to be changed recently
 fi

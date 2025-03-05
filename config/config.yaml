@@ -5,14 +5,15 @@ val_data: 2024 # test would be same as val_data as in in-sample setting
 
 debug: False
 
-num_epochs: 20
-max_steps: 4000
+# num_epochs: 20
+max_steps: 6000 # 4000 originally
+val_check_interval: 200 # num steps (if int) or portion of epoch (if float)
 lr: 3.0e-5
 train_bsz: 16
 eval_bsz: 16
 parent_log_dir: ./log
 
-n_trials: 10
+n_trials: 50
 
 # seeds: [0, 42, 100, 999, 1234]
 seeds: [0]
@@ -24,11 +25,13 @@ main_data: newsemp # options: newsemp, empstories
 delta: null
 
 error_decay_factor: 0.0
-loss_weight: 0.1 # penalty weight for non-SSL and unlabel_weight for SSL
+lambda_1: 1 # penalty weight for non-SSL and unlabel_weight for SSL
+lambda_2: 1 # only for SSL
+lambda_3: 1 # only for SSL
 
 approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
 expt_name_postfix: null
-do_tune: False
+do_tune: True
 do_train: True
 
 is_ssl: True 
