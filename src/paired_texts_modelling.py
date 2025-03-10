@@ -293,10 +293,11 @@ class LitPairedTextModel(L.LightningModule):
         })
 
     def _calculate_metrics(self, mean: Tensor, var: Tensor, label: Tensor, mode: str) -> dict:
-        pcc = pearson_corrcoef(mean, label)
-        ccc = concordance_corrcoef(mean, label)
-        scc = spearman_corrcoef(mean, label)
-        rmse = mean_squared_error(mean, label, squared=False)
+        # requires the tensors to be on the correct device as these are used for early stopping, checkpointing, etc.
+        pcc = pearson_corrcoef(mean, label).to(self.device)
+        ccc = concordance_corrcoef(mean, label).to(self.device)
+        scc = spearman_corrcoef(mean, label).to(self.device)
+        rmse = mean_squared_error(mean, label, squared=False).to(self.device)
 
         metrics_dict = {
             f"{mode}_pcc": pcc,
@@ -304,9 +305,11 @@ class LitPairedTextModel(L.LightningModule):
             f"{mode}_scc": scc,
             f"{mode}_rmse": rmse
         }
-
+        # log_info(logger, f"device: {metrics_dict[f'{mode}_pcc'].device}")
+        # import pdb; pdb.set_trace()
         if var is not None:
             # meaning that the model is probabilistic
+            # In my understanding, it is fine to have unc_metrics in CPU as it's not used for any further computation
             unc_metrics = calculate_unc_metrics(mean=mean, var=var, label=label)
             unc_metrics = {f"{mode}_{k}": v for k, v in unc_metrics.items()}
             metrics_dict.update(unc_metrics)
@@ -495,7 +498,7 @@ class PairedTextModelController(object):
             # )
             early_stopping = EarlyStopping(
                 monitor="val_ccc",
-                patience=5,
+                patience=2,
                 mode="max",
                 min_delta=0,
                 verbose=True
@@ -506,11 +509,17 @@ class PairedTextModelController(object):
             log_info(logger, "Early stopping disabled")
 
         if self.enable_checkpointing:            
+            # last only
             checkpoint = ModelCheckpoint(
-                save_top_k=1, # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
-                monitor="val_ccc",
-                mode="max"
+                save_top_k=1 # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
             )
+
+            # # best only
+            # checkpoint = ModelCheckpoint(
+            #     save_top_k=1,
+            #     monitor="val_ccc",
+            #     mode="max"
+            # )
             
             callbacks.append(checkpoint)
 

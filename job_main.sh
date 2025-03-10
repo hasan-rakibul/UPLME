@@ -5,7 +5,7 @@
 #SBATCH --time=1:00:00
 #SBATCH --nodes=1
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:8
 #SBATCH --account=pawsey1001-gpu
 
 module load pytorch/2.2.0-rocm5.7.3
@@ -14,5 +14,7 @@ singularity exec $SINGULARITY_CONTAINER bash -c "\
 source $MYSOFTWARE/.venv/bin/activate && \
 export TOKENIZERS_PARALLELISM=false && \
 python src/main.py \
-expt_name_postfix='kldiv-loss-tune' \
-debug=True "
+expt_name_postfix='last-ckpt-earlystopping-patience2-8gpus' \
+approach='cross-prob' \
+is_ssl=True \
+debug=False "
