@@ -158,8 +158,8 @@ class LitSSLModel(LitPairedTextModel):
 
         mean = 0.5 * (mean_1_lbl + mean_2_lbl)
         var = 0.5 * (var_1_lbl + var_2_lbl)
-        self.train_means.append(mean.detach())
-        self.train_vars.append(var.detach())
+        self.train_means.append(mean.detach().unsqueeze(0) if mean.dim() == 0 else mean.detach())
+        self.train_vars.append(var.detach().unsqueeze(0) if var.dim() == 0 else var.detach())
         
         return loss
     
@@ -189,9 +189,9 @@ class LitSSLModel(LitPairedTextModel):
         var = 0.5 * (var_1 + var_2)
         
         self.validation_outputs.append({
-            "mean": mean,
-            "var": var,
-            "labels": batch["labels"]
+            "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
+            "var": var.unsqueeze(0) if var.dim() == 0 else var,
+            "labels": batch["labels"].unsqueeze(0) if batch["labels"].dim() == 0 else batch["labels"]
         })
 
     def test_step(self, batch, batch_idx):
@@ -202,12 +202,12 @@ class LitSSLModel(LitPairedTextModel):
         var = 0.5 * (var_1 + var_2)
 
         outputs = {
-            "mean": mean,
-            "var": var
+            "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
+            "var": var.unsqueeze(0) if var.dim() == 0 else var
         }
 
         if "labels" in batch:
-            outputs["labels"] = batch["labels"]
+            outputs["labels"] = batch["labels"].unsqueeze(0) if batch["labels"].dim() == 0 else batch["labels"]
 
         self.test_outputs.append(outputs)
 

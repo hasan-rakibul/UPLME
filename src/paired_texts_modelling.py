@@ -286,10 +286,12 @@ class LitPairedTextModel(L.LightningModule):
         mean, var = self.model(batch)
         _ = self._compute_and_log_loss(mean, var, batch["labels"], prefix="val")
 
+        # Note: it's important to check dim and unsqeeze as we get 0-dim if the last batch has only one sample
+        # Otherwise, we get an error when concatenating tensors later
         self.validation_outputs.append({
-            "mean": mean,
-            "var": var,
-            "labels": batch["labels"]
+            "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
+            "var": var.unsqueeze(0) if var.dim() == 0 else var,
+            "labels": batch["labels"].unsqueeze(0) if batch["labels"].dim() == 0 else batch["labels"]
         })
 
     def _calculate_metrics(self, mean: Tensor, var: Tensor, label: Tensor, mode: str) -> dict:
@@ -305,8 +307,7 @@ class LitPairedTextModel(L.LightningModule):
             f"{mode}_scc": scc,
             f"{mode}_rmse": rmse
         }
-        # log_info(logger, f"device: {metrics_dict[f'{mode}_pcc'].device}")
-        # import pdb; pdb.set_trace()
+
         if var is not None:
             # meaning that the model is probabilistic
             # In my understanding, it is fine to have unc_metrics in CPU as it's not used for any further computation
@@ -359,8 +360,8 @@ class LitPairedTextModel(L.LightningModule):
         mean, var = self.model(batch)
         
         outputs = {
-            "mean": mean,
-            "var": var
+            "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
+            "var": var.unsqueeze(0) if var.dim() == 0 else var
         }
 
         if "labels" in batch:
