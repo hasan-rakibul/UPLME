@@ -259,10 +259,11 @@ class LitPairedTextModel(L.LightningModule):
 
         return self.lambda_1 * penalty_loss
     
-    def _compute_and_log_loss(self, mean: Tensor, var: Tensor | None, labels: Tensor, prefix: str):
+    def _compute_loss(self, mean: Tensor, var: Tensor | None, labels: Tensor, prefix: str) -> tuple[Tensor, dict]:
         if var is None:
             # Basic model with MSE loss
             total_loss = F.mse_loss(mean, labels.squeeze())
+            loss_dict = {f"{prefix}_total_loss": total_loss}
         else:
             nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
 
@@ -270,27 +271,39 @@ class LitPairedTextModel(L.LightningModule):
             
             total_loss = nll_loss + penalty_loss
 
-            self.log(f"{prefix}_nll_loss", nll_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
-            self.log(f"{prefix}_penalty_loss", penalty_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
+            # for logging purposes
+            loss_dict = {
+                f"{prefix}_nll_loss": nll_loss,
+                f"{prefix}_penalty_loss": penalty_loss,
+                f"{prefix}_total_loss": total_loss
+            }
 
-        self.log(f"{prefix}_total_loss", total_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
-
-        return total_loss
+        return total_loss, loss_dict
     
     def training_step(self, batch, batch_idx):
         mean, var = self.model(batch)
-        loss = self._compute_and_log_loss(mean, var, batch["labels"], prefix="train")
+        loss, loss_dict = self._compute_loss(mean, var, batch["labels"], prefix="train")
+        self.log_dict(
+            loss_dict,
+            on_step=True,
+            on_epoch=False,
+            logger=True,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=batch["labels"].shape[0]
+        )
         return loss
     
     def validation_step(self, batch, batch_idx):
         mean, var = self.model(batch)
-        _ = self._compute_and_log_loss(mean, var, batch["labels"], prefix="val")
 
+        if var is not None: # could be None for basic model
+            var = var.unsqueeze(0) if var.dim() == 0 else var
         # Note: it's important to check dim and unsqeeze as we get 0-dim if the last batch has only one sample
         # Otherwise, we get an error when concatenating tensors later
         self.validation_outputs.append({
             "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
-            "var": var.unsqueeze(0) if var.dim() == 0 else var,
+            "var": var,
             "labels": batch["labels"].unsqueeze(0) if batch["labels"].dim() == 0 else batch["labels"]
         })
 
@@ -320,21 +333,30 @@ class LitPairedTextModel(L.LightningModule):
     def on_validation_epoch_end(self):
         all_means = torch.cat([out["mean"] for out in self.validation_outputs])
         all_labels = torch.cat([out["labels"] for out in self.validation_outputs])
-
-        all_means = all_means.to(torch.float64).cpu()
-        all_labels = all_labels.to(torch.float64).cpu()
-
+        
         if self.validation_outputs[0]["var"] is None:
             all_vars = None
         else:
             all_vars = torch.cat([out["var"] for out in self.validation_outputs])
+        
+        _, loss_dict = self._compute_loss(all_means, all_vars, all_labels, prefix="val")
+
+        all_means = all_means.to(torch.float64).cpu()
+        all_labels = all_labels.to(torch.float64).cpu()
+        if all_vars is not None:
             all_vars = all_vars.to(torch.float64).cpu()
 
+        log_dict = self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val")
+        log_dict.update(loss_dict)
+
         self.log_dict(
-            self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val"),
+            log_dict,
+            on_step=False, # must be False
+            on_epoch=True, # must be True
             logger=True,
             prog_bar=True,
-            sync_dist=True
+            sync_dist=True,
+            batch_size=self.validation_outputs[0]["mean"].shape[0]
         )
 
         self.validation_outputs.clear()
@@ -358,10 +380,13 @@ class LitPairedTextModel(L.LightningModule):
 
     def test_step(self, batch, batch_idx):
         mean, var = self.model(batch)
-        
+
+        if var is not None:
+            var = var.unsqueeze(0) if var.dim() == 0 else var
+
         outputs = {
             "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
-            "var": var.unsqueeze(0) if var.dim() == 0 else var
+            "var": var
         }
 
         if "labels" in batch:
@@ -390,7 +415,8 @@ class LitPairedTextModel(L.LightningModule):
                 self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="test"),
                 logger=False,
                 prog_bar=False,
-                sync_dist=True
+                sync_dist=True,
+                batch_size=self.test_outputs[0]["mean"].shape[0]
             )
 
         if all_vars is not None:
@@ -443,7 +469,7 @@ class PairedTextModelController(object):
         self.lambda_1 = lambda_1
         self.approach = approach
 
-        self.enable_early_stopping = True
+        self.enable_early_stopping = False
         self.early_stopping_start_epoch = 5
         self.enable_checkpointing = True
         self.save_uc_metrics = False
