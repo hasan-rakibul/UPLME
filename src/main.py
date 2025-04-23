@@ -1,7 +1,6 @@
 import os
 import logging
 import transformers
-import datetime
 
 import hydra
 from omegaconf import DictConfig
@@ -21,6 +20,9 @@ torch.set_float32_matmul_precision('high')
 @hydra.main(config_path="../config", config_name="config", version_base="1.3")
 def main(cfg: DictConfig):
     transformers.logging.set_verbosity_error()
+
+    parent_log_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+    expt_name = hydra.core.hydra_config.HydraConfig.get().job.name
     
     # things coming from the config
     seeds = cfg.seeds
@@ -30,14 +32,11 @@ def main(cfg: DictConfig):
     eval_bsz = cfg.eval_bsz
     delta = cfg.delta
     n_trials = cfg.n_trials
-    parent_log_dir = cfg.parent_log_dir
     error_decay_factor = cfg.error_decay_factor
     do_tune = cfg.do_tune
     do_train = cfg.do_train
     overwrite_parent_dir = cfg.overwrite_parent_dir
     approach = cfg.approach
-    expt_name_postfix = cfg.expt_name_postfix
-    debug = cfg.debug
     main_data = cfg.main_data
 
     is_ssl = cfg.is_ssl
@@ -63,19 +62,16 @@ def main(cfg: DictConfig):
     if not do_tune and not do_train and (overwrite_parent_dir is None):
         raise ValueError("Assuming you want to test only, please provide the overwrite_parent_dir")
 
-    expt_name = f'{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}_{main_data}_{approach}_ssl-{is_ssl}'
-    if expt_name_postfix is not None:
-        expt_name += f"_{expt_name_postfix}"
-
     if overwrite_parent_dir is not None:
         log_info(logger, f"Using overwrite_logging_dir {overwrite_parent_dir}")
         log_info(logger, "MAKE SURE you DELETE the last directory manually which was not trained for all epochs.")
         parent_log_dir = os.path.normpath(overwrite_parent_dir) # normpath to remove trailing slashes if any
+        Warning("Verify that the following expt_name is parsed properly. Not checked after moving to hydra-based log dir")
         expt_name = os.path.basename(parent_log_dir) # we need this for resuming Optuna
-    else:
-        parent_log_dir = os.path.join(parent_log_dir, expt_name)
 
-    if debug:
+    debug = False
+    if expt_name.startswith("debug"):
+        debug = True
         log_info(logger, "Debug mode")
         logger.setLevel(logging.DEBUG)
         seeds = seeds[:2] # reduce the number of seeds for debugging
@@ -83,11 +79,6 @@ def main(cfg: DictConfig):
         cfg.max_steps = 50
         cfg.val_check_interval = 5
         n_trials = 2
-        parent_log_dir = "./log/debug"
-        expt_name = "debug"
-        if os.path.exists(parent_log_dir):
-            os.system(f"rm -rf {parent_log_dir}")
-        os.makedirs(parent_log_dir, exist_ok=True)
 
     if is_ssl:
         modelling = SSLModelController(

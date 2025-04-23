@@ -105,7 +105,11 @@ class CrossEncoderProbModel(torch.nn.Module):
         super().__init__()
         self.model = AutoModel.from_pretrained(plm_name)
 
-        self.pooling = "roberta-pooler"
+        if plm_name.startswith("roberta"):
+            # only applicable for roberta
+            self.pooling = "roberta-pooler"
+        else:
+            self.pooling = "cls"
 
         self.out_proj_m = torch.nn.Sequential(
             torch.nn.Dropout(0.1),
@@ -118,15 +122,17 @@ class CrossEncoderProbModel(torch.nn.Module):
             torch.nn.Softplus()
         )
 
-    def forward(self, batch):
+    def forward(self, input_ids, attention_mask):
         output = self.model(
-            input_ids=batch['input_ids'],
-            attention_mask=batch['attention_mask']
+            input_ids=input_ids,
+            attention_mask=attention_mask
         )
 
         if self.pooling == "mean":
-            attn = batch['attention_mask']
-            sentence_representation = (output.last_hidden_state * attn.unsqueeze(-1)).sum(-2) / attn.sum(dim=-1).unsqueeze(-1)
+            sentence_representation = (
+                (output.last_hidden_state * attention_mask.unsqueeze(-1)).sum(-2) /
+                attention_mask.sum(dim=-1).unsqueeze(-1)
+            )
         elif self.pooling == "cls":
             sentence_representation = output.last_hidden_state[:, 0, :]
         elif self.pooling == "roberta-pooler":
@@ -281,7 +287,13 @@ class LitPairedTextModel(L.LightningModule):
         return total_loss, loss_dict
     
     def training_step(self, batch, batch_idx):
-        mean, var = self.model(batch)
+        if self.approach == "cross-prob":
+            mean, var = self.model(
+                input_ids=batch['input_ids'],
+                attention_mask=batch['attention_mask']
+            )
+        else:
+            mean, var = self.model(batch)
         loss, loss_dict = self._compute_loss(mean, var, batch["labels"], prefix="train")
         self.log_dict(
             loss_dict,
@@ -295,7 +307,13 @@ class LitPairedTextModel(L.LightningModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        mean, var = self.model(batch)
+        if self.approach == "cross-prob":
+            mean, var = self.model(
+                input_ids=batch['input_ids'],
+                attention_mask=batch['attention_mask']
+            )
+        else:
+            mean, var = self.model(batch)
 
         if var is not None: # could be None for basic model
             var = var.unsqueeze(0) if var.dim() == 0 else var
@@ -379,7 +397,13 @@ class LitPairedTextModel(L.LightningModule):
         plot_uncertainy(output_dict, f"{self.log_dir}/uncertainty.pdf")
 
     def test_step(self, batch, batch_idx):
-        mean, var = self.model(batch)
+        if self.approach == "cross-prob":
+            mean, var = self.model(
+                input_ids=batch['input_ids'],
+                attention_mask=batch['attention_mask']
+            )
+        else:
+            mean, var = self.model(batch)
 
         if var is not None:
             var = var.unsqueeze(0) if var.dim() == 0 else var
@@ -479,19 +503,21 @@ class PairedTextModelController(object):
             # self.plm_names = ["cross-encoder/stsb-roberta-base"]
             self.plm_names = ["roberta-base"]
         elif self.approach == "siamese":
-            self.plm_names = ["facebook/bart-base"]
+            self.plm_names = ["facebook/bart-base", "facebook/bart-base"]
         elif self.approach == "bi-prob":
             self.plm_names = ["roberta-base", "roberta-base"]
         elif self.approach == "cross-prob":
             # self.plm_names = ["cross-encoder/stsb-roberta-base"]
-            self.plm_names = ["roberta-base"]
+            self.plm_names = ["roberta-base", "answerdotai/ModernBERT-base"]
         else:
             raise ValueError(f"Unknown approach: {self.approach}")
 
         self.dm = PairedTextDataModule(
             delta=self.delta,
             tokeniser_plms=self.plm_names,
-            is_separate_tokeniser=True if self.approach in ["bi-prob", "siamese"] else False
+            tokenise_paired_texts_each_tokeniser=True if self.approach in ["cross-prob"] else False
+            # TODO: check if the above should be True for other approaches
+            # is_separate_tokeniser=True if self.approach in ["bi-prob", "siamese"] else False # NOTE: moving to len(plm_names) based decision
         )
 
         # train_dl is seed-dependent, so it's created in the seed-wise training

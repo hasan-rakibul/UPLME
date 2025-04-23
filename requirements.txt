@@ -1,3 +1,4 @@
+# torch==2.2.0 # got from setonix module
 transformers
 datasets
 lightning

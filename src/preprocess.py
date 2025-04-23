@@ -188,11 +188,13 @@ class PairedTextDataModule:
             self, 
             delta: float, 
             tokeniser_plms: list[str],
-            is_separate_tokeniser: bool
+            # is_separate_tokeniser: bool
+            tokenise_paired_texts_each_tokeniser: bool
         ):
 
         self.delta = delta
-        self.is_separate_tokeniser = is_separate_tokeniser
+        # self.is_separate_tokeniser = is_separate_tokeniser
+        self.tokenise_paired_texts_each_tokeniser = tokenise_paired_texts_each_tokeniser
 
         # keeping them constant for now, can make them arguments if required
         self.feature_to_tokenise = ["text_1", "text_2"]
@@ -207,45 +209,72 @@ class PairedTextDataModule:
             add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
         )
 
-        if self.is_separate_tokeniser:
+        if len(self.tokeniser_plms) > 1:
+            # the second tokeniser, required for bi-encoder and cross-encoder modelling
             self.tokeniser_extra = AutoTokenizer.from_pretrained(
                 self.tokeniser_plms[1],
                 use_fast=True,
                 add_prefix_space=False # the first word is tokenised differently if not a prefix space, but it might decrease performance, so False (09/24)
-            )
+            ) # TODO: need to check if the parameters need any change depending on the tokeniser plm
 
             self.data_collator = BiEncoderDataCollator(tokeniser_1=self.tokeniser, tokeniser_2=self.tokeniser_extra)
 
         else:
             self.data_collator = DataCollatorWithPadding(tokenizer=self.tokeniser)
 
-    def _tokeniser_bi_encoder(self, sentence):
-        tokenised_1 = self.tokeniser(
+    def _individual_text_through_two_tokenisers(self, sentence):
+        """Process single sentence column through two tokenisers"""
+        tokeniser_1 = self.tokeniser(
             sentence[self.feature_to_tokenise[0]],
             truncation=True,
             max_length=self.max_length
         )
 
-        tokenised_2 = self.tokeniser_extra(
+        tokeniser_2 = self.tokeniser_extra(
             sentence[self.feature_to_tokenise[1]],
             truncation=True,
             max_length=self.max_length
         )
 
         return {
-            'input_ids_1': tokenised_1['input_ids'],
-            'attention_mask_1': tokenised_1['attention_mask'],
-            'input_ids_2': tokenised_2['input_ids'],
-            'attention_mask_2': tokenised_2['attention_mask']
+            'input_ids_1': tokeniser_1['input_ids'],
+            'attention_mask_1': tokeniser_1['attention_mask'],
+            'input_ids_2': tokeniser_2['input_ids'],
+            'attention_mask_2': tokeniser_2['attention_mask']
         }
         
-    def _tokeniser_cross_encoder(self, sentence):
+    def _paired_texts_through_one_tokeniser(self, sentence):
+        """Process pair of sentence through the same tokeniser"""
         return self.tokeniser(
             sentence[self.feature_to_tokenise[0]],
             sentence[self.feature_to_tokenise[1]],
             truncation=True,
             max_length=self.max_length
         )
+
+    def _paired_texts_through_two_tokenisers(self, sentence):
+        """Process pair of sentence through the two tokenisers"""
+
+        tokeniser_1 = self.tokeniser(
+            sentence[self.feature_to_tokenise[0]],
+            sentence[self.feature_to_tokenise[1]],
+            truncation=True,
+            max_length=self.max_length
+        )
+
+        tokeniser_2 = self.tokeniser_extra(
+            sentence[self.feature_to_tokenise[0]],
+            sentence[self.feature_to_tokenise[1]],
+            truncation=True,
+            max_length=self.max_length
+        )
+
+        return {
+            'input_ids_1': tokeniser_1['input_ids'],
+            'attention_mask_1': tokeniser_1['attention_mask'],
+            'input_ids_2': tokeniser_2['input_ids'],
+            'attention_mask_2': tokeniser_2['attention_mask']
+        }
 
     def get_hf_data(
             self, data_paths: list[str], sanitise_newsemp_labels: bool, 
@@ -281,7 +310,7 @@ class PairedTextDataModule:
         def _augment_combine_save(data: pd.DataFrame | None, save_as: str) -> pd.DataFrame:
             """
             save_path to save or load the whole data
-            if loaded, we don't need data
+            if loaded, we don't need to augment again
             """
             if os.path.exists(save_as):
                 data = pd.read_csv(save_as, sep="\t")
@@ -422,10 +451,15 @@ class PairedTextDataModule:
         # the remaining processing like convertint to hf
 
         all_data_hf = Dataset.from_pandas(all_data, preserve_index=False) # convert to huggingface dataset
-        
+
+        # resolve tokeniser function
+        if self.tokenise_paired_texts_each_tokeniser:
+            tokeniser_fn = self._paired_texts_through_one_tokeniser if len(self.tokeniser_plms) == 1 else self._paired_texts_through_two_tokenisers
+        else:
+            tokeniser_fn = self._individual_text_through_two_tokenisers if len(self.tokeniser_plms) > 1 else None # Cannot have single text through single tokeniser
         # tokenise
         all_data_hf = all_data_hf.map(
-            self._tokeniser_bi_encoder if self.is_separate_tokeniser else self._tokeniser_cross_encoder,
+            tokeniser_fn,
             batched=True,
             remove_columns=self.feature_to_tokenise
         )
@@ -478,7 +512,7 @@ class PairedTextDataModule:
         return self._get_dl(
             data_path_list, shuffle=True, 
             batch_size=batch_size, sanitise_newsemp_labels=sanitise_newsemp_labels, add_noise=add_noise, seed=seed,
-            is_newsemp=is_newsemp, do_augment=True
+            is_newsemp=is_newsemp, do_augment=False # FIXME: make TRUE
         )
     
     def get_val_dl(

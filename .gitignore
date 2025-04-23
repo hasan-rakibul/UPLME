@@ -1,6 +1,3 @@
-log_slurm/**
-log/**
-log_archived/**
 OTHERS/**
 src/archived/**
 src/ucvme/**

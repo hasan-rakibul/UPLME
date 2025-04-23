@@ -1,9 +1,13 @@
+hydra:
+  job:
+    name: "separate-plms-no-augm"
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra:job.name}
+
 # these are just to retrieve the correct file names for newsemp dataset.
 # actual train and val data depends on main_data
 train_data: [2024, 2022]
 val_data: 2024 # test would be same as val_data as in in-sample setting
-
-debug: False
 
 # num_epochs: 20
 max_steps: 6000 # 4000 originally
@@ -11,7 +15,6 @@ val_check_interval: 200 # num steps (if int) or portion of epoch (if float)
 lr: 3.0e-5
 train_bsz: 16
 eval_bsz: 16
-parent_log_dir: ./log
 
 n_trials: 1
 
@@ -30,7 +33,6 @@ lambda_2: 6.64 # only for SSL
 lambda_3: 0.04 # only for SSL
 
 approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
-expt_name_postfix: null
 do_tune: False
 do_train: True
 

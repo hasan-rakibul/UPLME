@@ -120,8 +120,14 @@ class LitSSLModel(LitPairedTextModel):
 
     def training_step(self, batch: dict, batch_idx):
         batch_lbl = batch["lbl"] 
-        mean_1_lbl, var_1_lbl = self.model_1(batch_lbl)
-        mean_2_lbl, var_2_lbl = self.model_2(batch_lbl)
+        mean_1_lbl, var_1_lbl = self.model_1(
+            input_ids=batch_lbl["input_ids_1"],
+            attention_mask=batch_lbl["attention_mask_1"]
+        )
+        mean_2_lbl, var_2_lbl = self.model_2(
+            input_ids=batch_lbl["input_ids_2"],
+            attention_mask=batch_lbl["attention_mask_2"]
+        )
 
         total_loss, loss_dict = self._compute_loss_lbl(
             mean_1=mean_1_lbl, mean_2=mean_2_lbl, 
@@ -131,8 +137,14 @@ class LitSSLModel(LitPairedTextModel):
         
         if self.trainer.global_step > 200:
             batch_unlbl = batch["unlbl"]
-            mean_1_unlbl, var_1_unlbl = self.model_1(batch_unlbl)
-            mean_2_unlbl, var_2_unlbl = self.model_2(batch_unlbl)
+            mean_1_unlbl, var_1_unlbl = self.model_1(
+                input_ids=batch_unlbl["input_ids_1"],
+                attention_mask=batch_unlbl["attention_mask_1"]
+            )
+            mean_2_unlbl, var_2_unlbl = self.model_2(
+                input_ids=batch_unlbl["input_ids_2"],
+                attention_mask=batch_unlbl["attention_mask_2"]
+            )
             
             loss_unlbl, loss_dict_unlbl = self._compute_loss_unlbl(
                 mean_1=mean_1_unlbl, mean_2=mean_2_unlbl, 
@@ -171,8 +183,14 @@ class LitSSLModel(LitPairedTextModel):
         self.train_vars.clear()
     
     def validation_step(self, batch: dict, batch_idx):
-        mean_1, var_1 = self.model_1(batch)
-        mean_2, var_2 = self.model_2(batch)
+        mean_1, var_1 = self.model_1(
+            input_ids=batch["input_ids_1"],
+            attention_mask=batch["attention_mask_1"]
+        )
+        mean_2, var_2 = self.model_2(
+            input_ids=batch["input_ids_2"],
+            attention_mask=batch["attention_mask_2"]
+        )
         
         self.validation_outputs.append({
             "mean_1": mean_1.unsqueeze(0) if mean_1.dim() == 0 else mean_1,
@@ -217,8 +235,14 @@ class LitSSLModel(LitPairedTextModel):
         self.validation_outputs.clear()
 
     def test_step(self, batch, batch_idx):
-        mean_1, var_1 = self.model_1(batch)
-        mean_2, var_2 = self.model_2(batch)
+        mean_1, var_1 = self.model_1(
+            input_ids=batch["input_ids_1"],
+            attention_mask=batch["attention_mask_1"]
+        )
+        mean_2, var_2 = self.model_2(
+            input_ids=batch["input_ids_2"],
+            attention_mask=batch["attention_mask_2"]
+        )
 
         mean = 0.5 * (mean_1 + mean_2)
         var = 0.5 * (var_1 + var_2)
@@ -247,11 +271,6 @@ class SSLModelController(PairedTextModelController):
         self.unlbl_data_files = unlbl_data_files
         self.lambda_2 = lambda_2
         self.lambda_3 = lambda_3
-
-        if self.approach == "cross-prob":
-            self.plm_names = ["roberta-base", "roberta-base"]
-            if self.plm_names[0] != self.plm_names[1]:
-                warnings.warn(f"Note that only {self.plm_names[0]} is used in tokenisation.")
     
     def _seed_wise_train_validate(self, seed: int, curr_log_dir: str, extra_callbacks: list | None = None) -> tuple[str, dict]:
         L.seed_everything(seed)
