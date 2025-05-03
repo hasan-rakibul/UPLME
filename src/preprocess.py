@@ -512,7 +512,7 @@ class PairedTextDataModule:
         return self._get_dl(
             data_path_list, shuffle=True, 
             batch_size=batch_size, sanitise_newsemp_labels=sanitise_newsemp_labels, add_noise=add_noise, seed=seed,
-            is_newsemp=is_newsemp, do_augment=False # FIXME: make TRUE
+            is_newsemp=is_newsemp, do_augment=True
         )
     
     def get_val_dl(

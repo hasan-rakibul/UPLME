@@ -135,7 +135,7 @@ class LitSSLModel(LitPairedTextModel):
             labels=batch_lbl["labels"], prefix="train_lbl"
         )
         
-        if self.trainer.global_step > 200:
+        if hasattr(self, "global_mean"): # global_mean is set in on_train_epoch_end, so it means "first epoch"
             batch_unlbl = batch["unlbl"]
             mean_1_unlbl, var_1_unlbl = self.model_1(
                 input_ids=batch_unlbl["input_ids_1"],
