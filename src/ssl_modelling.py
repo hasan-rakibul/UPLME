@@ -281,21 +281,33 @@ class SSLModelController(PairedTextModelController):
     def _seed_wise_train_validate(self, seed: int, curr_log_dir: str, extra_callbacks: list | None = None) -> tuple[str, dict]:
         L.seed_everything(seed)
         
-        train_dl_lbl = self.dm.get_train_dl(
-            data_path_list=self.train_file,
-            batch_size=self.train_bsz,
+        # Out-of-domain SSL
+        # train_dl_lbl = self.dm.get_train_dl(
+        #     data_path_list=self.train_file,
+        #     batch_size=self.train_bsz,
+        #     sanitise_newsemp_labels=True,
+        #     add_noise=False,
+        #     seed=seed,
+        #     is_newsemp=self.is_newsemp_main
+        # )
+        # train_dl_unlbl = self.dm.get_train_dl(
+        #     data_path_list=self.unlbl_data_files,
+        #     batch_size=self.train_bsz,
+        #     sanitise_newsemp_labels=False,
+        #     add_noise=False,
+        #     seed=seed,
+        #     is_newsemp=not self.is_newsemp_main # opposite of the main data
+        # )
+
+        # In-domain SSL
+        train_dl_lbl, train_dl_unlbl = self.dm.get_ssl_dls(
+            data_paths=self.train_file,
             sanitise_newsemp_labels=True,
             add_noise=False,
+            is_newsemp=self.is_newsemp_main,
+            lbl_split=0.5,
             seed=seed,
-            is_newsemp=self.is_newsemp_main
-        )
-        train_dl_unlbl = self.dm.get_train_dl(
-            data_path_list=self.unlbl_data_files,
-            batch_size=self.train_bsz,
-            sanitise_newsemp_labels=False,
-            add_noise=False,
-            seed=seed,
-            is_newsemp=not self.is_newsemp_main # opposite of the main data
+            batch_size=self.train_bsz
         )
 
         train_dl = CombinedLoader({"lbl": train_dl_lbl, "unlbl": train_dl_unlbl}, mode="max_size_cycle")

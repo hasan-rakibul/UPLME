@@ -538,6 +538,48 @@ class PairedTextDataModule:
             is_newsemp=is_newsemp
         ) # we have labels in 2024 data
 
+    def get_ssl_dls(self, data_paths: list[str], sanitise_newsemp_labels: bool, add_noise: bool, 
+                     is_newsemp: bool, lbl_split: float, seed: int, batch_size: int):
+        hf_ds = self.get_hf_data(
+            data_paths=data_paths,
+            sanitise_newsemp_labels=sanitise_newsemp_labels,
+            add_noise=add_noise,
+            is_newsemp=is_newsemp,
+            do_augment=True
+        )
+
+        split_ds = hf_ds.train_test_split(
+            train_size=lbl_split,
+            shuffle=True,
+            seed=seed
+        )
+        lbl_ds = split_ds["train"]
+        unlbl_ds = split_ds["test"]
+
+        lbl_dl = DataLoader(
+            lbl_ds,
+            batch_size=batch_size, 
+            shuffle=True,
+            collate_fn=self.data_collator,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            worker_init_fn=self._seed_worker,
+            generator=torch.Generator().manual_seed(seed)
+        )
+
+        unlbl_dl = DataLoader(
+            unlbl_ds,
+            batch_size=batch_size,
+            shuffle=True,
+            collate_fn=self.data_collator,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            worker_init_fn=self._seed_worker,
+            generator=torch.Generator().manual_seed(seed)
+        )
+
+        return lbl_dl, unlbl_dl
+
 
 class DataModuleFromRaw:
     def __init__(self, delta: float, seed: int, tokeniser_plm: str = "roberta-base"):
