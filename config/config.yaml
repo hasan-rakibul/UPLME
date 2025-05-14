@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "separate-plms-augm"
+    name: "wasserstein-consistency-beta-nll-lambda1-0.5"
   run:
     dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra:job.name}
 
@@ -28,9 +28,9 @@ main_data: newsemp # options: newsemp, empstories
 delta: null
 
 error_decay_factor: 0.0
-lambda_1: 0.11 # penalty weight for non-SSL and unlabel_weight for SSL
-lambda_2: 6.64 # only for SSL
-lambda_3: 0.04 # only for SSL
+lambda_1: 0.5 # penalty weight for non-SSL and unlabel_weight for SSL
+lambda_2: 0 # only for SSL
+lambda_3: 0 # only for SSL
 
 approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
 do_tune: False

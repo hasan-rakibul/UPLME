@@ -15,7 +15,7 @@ from optuna.integration import PyTorchLightningPruningCallback
 import plotly # required for optuna.visualisation
 
 from paired_texts_modelling import PairedTextModelController, CrossEncoderProbModel, LitPairedTextModel
-from utils import log_info
+from utils import log_info, beta_nll_loss
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class LitSSLModel(LitPairedTextModel):
         super().__init__(*args, **kwargs)
 
         if self.approach == "cross-prob":
-            self.model_1 = self.model
+            self.model_1 = self.model # defined in the parent class, uses the first plm_name
             self.model_2 = CrossEncoderProbModel(plm_name=self.hparams.plm_names[1])
         else:
             raise ValueError(f"Invalid or not-implemented approach: {self.approach}")
@@ -38,13 +38,16 @@ class LitSSLModel(LitPairedTextModel):
         self.train_vars = []
 
     def _compute_consistency_loss(self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor) -> Tensor:
-        dist_1 = dist.Normal(mean_1, torch.sqrt(var_1))
-        dist_2 = dist.Normal(mean_2, torch.sqrt(var_2))
-        # kl_div is not symmetric, so taking the mean of both ways
-        consistency = 0.5 * (
-            dist.kl_divergence(dist_1, dist_2).mean() +
-            dist.kl_divergence(dist_2, dist_1).mean()
-        )
+        # dist_1 = dist.Normal(mean_1, torch.sqrt(var_1))
+        # dist_2 = dist.Normal(mean_2, torch.sqrt(var_2))
+        # # kl_div is not symmetric, so taking the mean of both ways
+        # consistency = 0.5 * (
+        #     dist.kl_divergence(dist_1, dist_2).mean() +
+        #     dist.kl_divergence(dist_2, dist_1).mean()
+        # )
+        
+        # 2-Wasserstein distance
+        consistency = ((mean_1 - mean_2) ** 2 + (torch.sqrt(var_1) - torch.sqrt(var_2)) ** 2).mean()
 
         return consistency
 
@@ -58,8 +61,9 @@ class LitSSLModel(LitPairedTextModel):
 
         mean = 0.5 * (mean_1 + mean_2)
         var = 0.5 * (var_1 + var_2)
-        nll = F.gaussian_nll_loss(mean, labels.squeeze(), var)
-        
+        # nll = F.gaussian_nll_loss(mean, labels.squeeze(), var)
+        nll = beta_nll_loss(mean, var, labels)
+
         # nll_1 = F.gaussian_nll_loss(mean_1, labels.squeeze(), var_1)
         # nll_2 = F.gaussian_nll_loss(mean_2, labels.squeeze(), var_2)
         # nll = 0.5 * (nll_1 + nll_2)
@@ -135,7 +139,9 @@ class LitSSLModel(LitPairedTextModel):
             labels=batch_lbl["labels"], prefix="train_lbl"
         )
         
-        if hasattr(self, "global_mean"): # global_mean is set in on_train_epoch_end, so it means "first epoch"
+        # global_mean is set in on_train_epoch_end, so it means "first epoch"
+        # plus, if all unlabelled loss weights are 0, then it won't be used
+        if hasattr(self, "global_mean") and not (self.lambda_2 == 0 and self.lambda_3 == 0):
             batch_unlbl = batch["unlbl"]
             mean_1_unlbl, var_1_unlbl = self.model_1(
                 input_ids=batch_unlbl["input_ids_1"],
@@ -152,7 +158,7 @@ class LitSSLModel(LitPairedTextModel):
                 prefix="train_unlb"
             )
 
-            total_loss += self.lambda_1 * loss_unlbl
+            total_loss += loss_unlbl
 
             loss_dict.update(loss_dict_unlbl)
 

@@ -140,6 +140,7 @@ class CrossEncoderProbModel(torch.nn.Module):
 
         mean = self.out_proj_m(sentence_representation)
         var = self.out_proj_v(sentence_representation)
+        var = torch.clamp(var, min=1e-8, max=1000) # following Seitzer-NeurIPS2022
 
         return mean.squeeze(), var.squeeze()
 
