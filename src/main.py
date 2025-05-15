@@ -66,7 +66,6 @@ def main(cfg: DictConfig):
         log_info(logger, f"Using overwrite_logging_dir {overwrite_parent_dir}")
         log_info(logger, "MAKE SURE you DELETE the last directory manually which was not trained for all epochs.")
         parent_log_dir = os.path.normpath(overwrite_parent_dir) # normpath to remove trailing slashes if any
-        Warning("Verify that the following expt_name is parsed properly. Not checked after moving to hydra-based log dir")
         expt_name = os.path.basename(parent_log_dir) # we need this for resuming Optuna
 
     debug = False
@@ -103,7 +102,8 @@ def main(cfg: DictConfig):
             lambda_3=cfg.lambda_3,
             approach=approach,
             main_data=main_data,
-            unlbl_data_files=unlbl_data_files
+            unlbl_data_files=unlbl_data_files,
+            lbl_split=cfg.lbl_split
         )
     else:
         modelling = PairedTextModelController(

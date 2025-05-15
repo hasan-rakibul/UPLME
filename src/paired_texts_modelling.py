@@ -691,6 +691,9 @@ class PairedTextModelController(object):
         for seed in seeds:
             log_info(logger, f"Current seed: {seed}")
 
+            # releasing the memory if allocated
+            torch.cuda.empty_cache()
+
             curr_log_dir = os.path.join(parent_log_dir, f"seed_{seed}")
             if self.do_train:
                 best_model_ckpt, metrics = self._seed_wise_train_validate(

@@ -269,6 +269,7 @@ class SSLModelController(PairedTextModelController):
             unlbl_data_files: list[str],
             lambda_2: float,
             lambda_3: float,
+            lbl_split: float,
             *args, **kwargs
         ):
         
@@ -277,9 +278,21 @@ class SSLModelController(PairedTextModelController):
         self.unlbl_data_files = unlbl_data_files
         self.lambda_2 = lambda_2
         self.lambda_3 = lambda_3
-    
+        self.lbl_split = lbl_split
+
     def _seed_wise_train_validate(self, seed: int, curr_log_dir: str, extra_callbacks: list | None = None) -> tuple[str, dict]:
         L.seed_everything(seed)
+        
+        # In-domain SSL
+        train_dl_lbl, train_dl_unlbl = self.dm.get_ssl_dls(
+            data_paths=self.train_file,
+            sanitise_newsemp_labels=True,
+            add_noise=False,
+            is_newsemp=self.is_newsemp_main,
+            lbl_split=self.lbl_split,
+            seed=seed,
+            batch_size=self.train_bsz
+        )
         
         # Out-of-domain SSL
         # train_dl_lbl = self.dm.get_train_dl(
@@ -299,16 +312,6 @@ class SSLModelController(PairedTextModelController):
         #     is_newsemp=not self.is_newsemp_main # opposite of the main data
         # )
 
-        # In-domain SSL
-        train_dl_lbl, train_dl_unlbl = self.dm.get_ssl_dls(
-            data_paths=self.train_file,
-            sanitise_newsemp_labels=True,
-            add_noise=False,
-            is_newsemp=self.is_newsemp_main,
-            lbl_split=0.5,
-            seed=seed,
-            batch_size=self.train_bsz
-        )
 
         train_dl = CombinedLoader({"lbl": train_dl_lbl, "unlbl": train_dl_unlbl}, mode="max_size_cycle")
 
