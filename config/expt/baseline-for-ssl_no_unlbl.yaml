@@ -1,0 +1,8 @@
+hydra:
+  job:
+    name: "debug-baseline-for-ssl-0.1-lambda1-1-resume"
+
+lambda_2: 0
+
+# Note: It's only the parent diretory like log/yyyymmdd_hhmmss_xx but nothing after that
+# overwrite_parent_dir: 

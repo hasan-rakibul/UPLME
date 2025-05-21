@@ -20,6 +20,9 @@ torch.set_float32_matmul_precision('high')
 @hydra.main(config_path="../config", config_name="config", version_base="1.3")
 def main(cfg: DictConfig):
     transformers.logging.set_verbosity_error()
+    logger.info(f"Experiment name: {cfg.expt}")
+    logger.info(f"Config: {cfg}")
+    import pdb; pdb.set_trace()
 
     parent_log_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     expt_name = hydra.core.hydra_config.HydraConfig.get().job.name
@@ -35,7 +38,7 @@ def main(cfg: DictConfig):
     error_decay_factor = cfg.error_decay_factor
     do_tune = cfg.do_tune
     do_train = cfg.do_train
-    overwrite_parent_dir = cfg.overwrite_parent_dir
+    overwrite_parent_dir = cfg.expt.overwrite_parent_dir
     approach = cfg.approach
     main_data = cfg.main_data
 
@@ -98,7 +101,7 @@ def main(cfg: DictConfig):
             do_test=True, # automatically, not done during hyperparameter tuning
             error_decay_factor=error_decay_factor,
             lambda_1=cfg.lambda_1,
-            lambda_2=cfg.lambda_2,
+            lambda_2=cfg.expt.lambda_2,
             lambda_3=cfg.lambda_3,
             approach=approach,
             main_data=main_data,

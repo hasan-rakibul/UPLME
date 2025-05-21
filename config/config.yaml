@@ -1,8 +1,16 @@
 hydra:
   job:
-    name: "wasserstein-consistency-beta-nll-lambda1-0.5"
+    name: ${expt.hydra.job.name} # inherit from expt
   run:
     dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra:job.name}
+
+# Notes: https://hydra.cc/docs/tutorials/basic/your_first_app/defaults/
+defaults:
+  - _self_ # means configs here will be overwritten by expt.
+  - expt: ssl
+
+expt:
+  overwrite_parent_dir: null
 
 # these are just to retrieve the correct file names for newsemp dataset.
 # actual train and val data depends on main_data
@@ -19,7 +27,7 @@ eval_bsz: 16
 n_trials: 1
 
 # seeds: [0, 42, 100, 999, 1234]
-seeds: [0]
+seeds: [0, 42, 100]
 
 main_data: newsemp # options: newsemp, empstories
 
@@ -28,18 +36,15 @@ main_data: newsemp # options: newsemp, empstories
 delta: null
 
 error_decay_factor: 0.0
-lambda_1: 0.5 # penalty weight for non-SSL and unlabel_weight for SSL
-lambda_2: 0 # only for SSL
-lambda_3: 0 # only for SSL
+lambda_1: 1 # labelled - consistency loss
+lambda_3: 0 # SSL - domain gap loss
 
 approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
 do_tune: False
 do_train: True
 
 is_ssl: True 
-
-# Note: It's only the parent diretory like log/yyyymmdd_hhmmss_xx but nothing after that
-overwrite_parent_dir: null 
+lbl_split: 0.1 # only for SSL
 
 # all files list that we can use for training / validation / testing
 2024:
