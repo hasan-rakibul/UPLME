@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "ssl-dropout-0.25-lambda1-1-lambda2-1"
+    name: "ssl-${lbl_split}-nll-wasserstein-lambda1-${lambda_1}-lambda2-${expt.lambda_2}"
 
 lambda_2: 1 # SSL - consistency loss
-overwrite_parent_dir: null
+

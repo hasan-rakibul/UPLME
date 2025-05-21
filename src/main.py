@@ -22,7 +22,6 @@ def main(cfg: DictConfig):
     transformers.logging.set_verbosity_error()
     logger.info(f"Experiment name: {cfg.expt}")
     logger.info(f"Config: {cfg}")
-    import pdb; pdb.set_trace()
 
     parent_log_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     expt_name = hydra.core.hydra_config.HydraConfig.get().job.name
@@ -67,6 +66,8 @@ def main(cfg: DictConfig):
 
     if overwrite_parent_dir is not None:
         log_info(logger, f"Using overwrite_logging_dir {overwrite_parent_dir}")
+        assert os.path.isdir(overwrite_parent_dir), f"{overwrite_parent_dir} is not a directory \
+            Note it must be a **parent** diretory like outputs/yyyy-mm-dd/hh-mm-ss_xx."
         log_info(logger, "MAKE SURE you DELETE the last directory manually which was not trained for all epochs.")
         parent_log_dir = os.path.normpath(overwrite_parent_dir) # normpath to remove trailing slashes if any
         expt_name = os.path.basename(parent_log_dir) # we need this for resuming Optuna
