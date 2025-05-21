@@ -3,3 +3,4 @@ hydra:
     name: "baseline-for-ssl-${lbl_split}-lambda1-${lambda_1}"
 
 lambda_2: 0
+lambda_3: 0

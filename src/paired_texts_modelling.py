@@ -137,12 +137,13 @@ class CrossEncoderProbModel(torch.nn.Module):
             sentence_representation = output.last_hidden_state[:, 0, :]
         elif self.pooling == "roberta-pooler":
             sentence_representation = output.pooler_output
+        # sentence_representation shape: (batch_size, 768)
 
         mean = self.out_proj_m(sentence_representation)
         var = self.out_proj_v(sentence_representation)
         var = torch.clamp(var, min=1e-8, max=1000) # following Seitzer-NeurIPS2022
 
-        return mean.squeeze(), var.squeeze()
+        return mean.squeeze(), var.squeeze(), sentence_representation
 
 class CrossEncoderBasicModel(torch.nn.Module):
     def __init__(self, plm_name: str):
@@ -509,7 +510,8 @@ class PairedTextModelController(object):
             self.plm_names = ["roberta-base", "roberta-base"]
         elif self.approach == "cross-prob":
             # self.plm_names = ["cross-encoder/stsb-roberta-base"]
-            self.plm_names = ["roberta-base", "answerdotai/ModernBERT-base"]
+            # self.plm_names = ["roberta-base", "answerdotai/ModernBERT-base"]
+            self.plm_names = ["answerdotai/ModernBERT-base", "answerdotai/ModernBERT-base"]
         else:
             raise ValueError(f"Unknown approach: {self.approach}")
 

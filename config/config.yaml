@@ -6,7 +6,7 @@ hydra:
 
 # Notes: https://hydra.cc/docs/tutorials/basic/your_first_app/defaults/
 defaults:
-  - _self_ # means configs here will be overwritten by expt.
+  - _self_ # means configs under expt here will be overwritten by expt/...yaml
   - expt: ssl
 
 expt:
@@ -37,7 +37,6 @@ delta: null
 
 error_decay_factor: 0.0
 lambda_1: 1 # labelled - consistency loss
-lambda_3: 0 # SSL - domain gap loss
 
 approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
 do_tune: False

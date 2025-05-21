@@ -8,6 +8,7 @@ outputs/**
 
 .declare_api_key.sh
 analysis-and-visualisation.ipynb
+notes.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

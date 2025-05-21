@@ -103,7 +103,7 @@ def main(cfg: DictConfig):
             error_decay_factor=error_decay_factor,
             lambda_1=cfg.lambda_1,
             lambda_2=cfg.expt.lambda_2,
-            lambda_3=cfg.lambda_3,
+            lambda_3=cfg.expt.lambda_3,
             approach=approach,
             main_data=main_data,
             unlbl_data_files=unlbl_data_files,

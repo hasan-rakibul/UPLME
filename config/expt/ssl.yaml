@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "ssl-${lbl_split}-nll-wasserstein-lambda1-${lambda_1}-lambda2-${expt.lambda_2}"
+    name: "ssl-lambda1-${lambda_1}-lambda2-${expt.lambda_2}-repr-consistency"
 
 lambda_2: 1 # SSL - consistency loss
-
+lambda_3: 1 # repr consistency loss

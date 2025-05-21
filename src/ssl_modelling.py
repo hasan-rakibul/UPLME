@@ -85,6 +85,7 @@ class LitSSLModel(LitPairedTextModel):
 
     def _compute_loss_unlbl(
             self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, 
+            sentence_rep_1: Tensor, sentence_rep_2: Tensor,
             prefix: str
         ) -> tuple[Tensor, dict]:
         # cons_12 = F.kl_div(F.log_softmax(mean_1, dim=-1), F.softmax(mean_2, dim=-1), reduction="batchmean")
@@ -105,18 +106,23 @@ class LitSSLModel(LitPairedTextModel):
         # loss = var_consistency + nll
 
         consistency = self.lambda_2 * self._compute_consistency_loss(mean_1, mean_2, var_1, var_2)
+        
+        repr_consistency = self.lambda_3 * F.mse_loss(sentence_rep_1, sentence_rep_2)
 
-        lbl_dist = dist.Normal(self.global_mean, torch.sqrt(self.global_var))
-        mean = 0.5 * (mean_1 + mean_2)
-        var = 0.5 * (var_1 + var_2)
-        unlbl_dist = dist.Normal(mean, torch.sqrt(var))
-        domain_gap = self.lambda_3 * dist.kl_divergence(unlbl_dist, lbl_dist).mean()
+        # lbl_dist = dist.Normal(self.global_mean, torch.sqrt(self.global_var))
+        # mean = 0.5 * (mean_1 + mean_2)
+        # var = 0.5 * (var_1 + var_2)
+        # unlbl_dist = dist.Normal(mean, torch.sqrt(var))
+        # domain_gap = self.lambda_3 * dist.kl_divergence(unlbl_dist, lbl_dist).mean()
 
-        loss = consistency + domain_gap
+        # loss = consistency + domain_gap
+
+        loss = consistency + repr_consistency
 
         loss_dict = {
             f"{prefix}_consistency": consistency,
-            f"{prefix}_domain_gap": domain_gap,
+            # f"{prefix}_domain_gap": domain_gap,
+            f"{prefix}_repr_consistency": repr_consistency,
             f"{prefix}_loss": loss
         }
 
@@ -124,11 +130,11 @@ class LitSSLModel(LitPairedTextModel):
 
     def training_step(self, batch: dict, batch_idx):
         batch_lbl = batch["lbl"] 
-        mean_1_lbl, var_1_lbl = self.model_1(
+        mean_1_lbl, var_1_lbl, _ = self.model_1(
             input_ids=batch_lbl["input_ids_1"],
             attention_mask=batch_lbl["attention_mask_1"]
         )
-        mean_2_lbl, var_2_lbl = self.model_2(
+        mean_2_lbl, var_2_lbl, _ = self.model_2(
             input_ids=batch_lbl["input_ids_2"],
             attention_mask=batch_lbl["attention_mask_2"]
         )
@@ -143,11 +149,11 @@ class LitSSLModel(LitPairedTextModel):
         # plus, if all unlabelled loss weights are 0, then it won't be used
         if hasattr(self, "global_mean") and not (self.lambda_2 == 0 and self.lambda_3 == 0):
             batch_unlbl = batch["unlbl"]
-            mean_1_unlbl, var_1_unlbl = self.model_1(
+            mean_1_unlbl, var_1_unlbl, sentence_rep_1_unlbl = self.model_1(
                 input_ids=batch_unlbl["input_ids_1"],
                 attention_mask=batch_unlbl["attention_mask_1"]
             )
-            mean_2_unlbl, var_2_unlbl = self.model_2(
+            mean_2_unlbl, var_2_unlbl, sentence_rep_2_unlbl = self.model_2(
                 input_ids=batch_unlbl["input_ids_2"],
                 attention_mask=batch_unlbl["attention_mask_2"]
             )
@@ -155,7 +161,9 @@ class LitSSLModel(LitPairedTextModel):
             loss_unlbl, loss_dict_unlbl = self._compute_loss_unlbl(
                 mean_1=mean_1_unlbl, mean_2=mean_2_unlbl, 
                 var_1=var_1_unlbl, var_2=var_2_unlbl, 
-                prefix="train_unlb"
+                sentence_rep_1=sentence_rep_1_unlbl, 
+                sentence_rep_2=sentence_rep_2_unlbl,
+                prefix="train_unlbl"
             )
 
             total_loss += loss_unlbl
@@ -189,11 +197,11 @@ class LitSSLModel(LitPairedTextModel):
         self.train_vars.clear()
     
     def validation_step(self, batch: dict, batch_idx):
-        mean_1, var_1 = self.model_1(
+        mean_1, var_1, _ = self.model_1(
             input_ids=batch["input_ids_1"],
             attention_mask=batch["attention_mask_1"]
         )
-        mean_2, var_2 = self.model_2(
+        mean_2, var_2, _ = self.model_2(
             input_ids=batch["input_ids_2"],
             attention_mask=batch["attention_mask_2"]
         )
@@ -241,11 +249,11 @@ class LitSSLModel(LitPairedTextModel):
         self.validation_outputs.clear()
 
     def test_step(self, batch, batch_idx):
-        mean_1, var_1 = self.model_1(
+        mean_1, var_1, _ = self.model_1(
             input_ids=batch["input_ids_1"],
             attention_mask=batch["attention_mask_1"]
         )
-        mean_2, var_2 = self.model_2(
+        mean_2, var_2, _ = self.model_2(
             input_ids=batch["input_ids_2"],
             attention_mask=batch["attention_mask_2"]
         )
