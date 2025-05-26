@@ -36,7 +36,7 @@ main_data: newsemp # options: newsemp, empstories
 delta: null
 
 error_decay_factor: 0.0
-lambda_1: 1 # labelled - consistency loss
+lambda_1: 0 # labelled - consistency loss
 
 approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
 do_tune: False

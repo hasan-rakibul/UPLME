@@ -512,6 +512,8 @@ class PairedTextModelController(object):
             # self.plm_names = ["cross-encoder/stsb-roberta-base"]
             # self.plm_names = ["roberta-base", "answerdotai/ModernBERT-base"]
             self.plm_names = ["answerdotai/ModernBERT-base", "answerdotai/ModernBERT-base"]
+            # self.plm_names = ["roberta-base", "roberta-base"]
+            # self.plm_names = ["roberta-base", "cardiffnlp/twitter-roberta-base-sentiment-latest"]
         else:
             raise ValueError(f"Unknown approach: {self.approach}")
 

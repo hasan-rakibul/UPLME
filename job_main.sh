@@ -2,7 +2,7 @@
  
 #SBATCH --job-name=PairedText
 #SBATCH --output=outputs/log_slurm/%j_%x.log
-#SBATCH --time=7:00:00
+#SBATCH --time=3:00:00
 #SBATCH --nodes=1
 #SBATCH --partition=gpu-highmem
 #SBATCH --gres=gpu:1

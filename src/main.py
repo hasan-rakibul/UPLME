@@ -1,4 +1,5 @@
 import os
+import shutil
 import logging
 import transformers
 
@@ -69,8 +70,10 @@ def main(cfg: DictConfig):
         assert os.path.isdir(overwrite_parent_dir), f"{overwrite_parent_dir} is not a directory \
             Note it must be a **parent** diretory like outputs/yyyy-mm-dd/hh-mm-ss_xx."
         log_info(logger, "MAKE SURE you DELETE the last directory manually which was not trained for all epochs.")
+        current_run_log_dir = parent_log_dir
         parent_log_dir = os.path.normpath(overwrite_parent_dir) # normpath to remove trailing slashes if any
-        expt_name = os.path.basename(parent_log_dir) # we need this for resuming Optuna
+        expt_name = os.path.basename(parent_log_dir)
+        expt_name = expt_name[9:] # remove the hh-mm-ss_ prefix
 
     debug = False
     if expt_name.startswith("debug"):
@@ -137,6 +140,15 @@ def main(cfg: DictConfig):
         parent_log_dir=parent_log_dir,
         seeds=seeds
     )
+
+    # clean-up
+    if overwrite_parent_dir is not None:
+        shutil.move(os.path.join(current_run_log_dir, f"{expt_name}.log"), os.path.join(parent_log_dir, "new-run.log"))
+        shutil.rmtree(current_run_log_dir) # because results are saved in earlier log dir
+        log_info(logger, f"Deleted {current_run_log_dir}")
+    if debug:
+        shutil.rmtree(parent_log_dir)
+        log_info(logger, f"Deleted {parent_log_dir}")
 
 if __name__ == "__main__":
     main()
