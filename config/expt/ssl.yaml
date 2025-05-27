@@ -1,8 +1,8 @@
 hydra:
   job:
-    name: "ssl-lambda1-${lambda_1}-lambda2-${expt.lambda_2}-repr-consistency-roberta-cardiffnlp"
+    name: "ssl-lambda1-${lambda_1}-lambda2-${expt.lambda_2}-loss-betn-texts"
 
 lambda_2: 1 # SSL - consistency loss
 lambda_3: 1 # repr consistency loss
 
-overwrite_parent_dir: outputs/2025-05-21/23-30-29_ssl-lambda1-0-lambda2-1-repr-consistency-modernbert 
+# overwrite_parent_dir:  

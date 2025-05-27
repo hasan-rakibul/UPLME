@@ -11,6 +11,7 @@ import logging
 import numpy as np
 import os
 import glob
+import warnings
 
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
@@ -136,14 +137,13 @@ class CrossEncoderProbModel(torch.nn.Module):
         elif self.pooling == "cls":
             sentence_representation = output.last_hidden_state[:, 0, :]
         elif self.pooling == "roberta-pooler":
-            sentence_representation = output.pooler_output
-        # sentence_representation shape: (batch_size, 768)
+            sentence_representation = output.pooler_output # (batch_size, hidden_dim)
 
         mean = self.out_proj_m(sentence_representation)
         var = self.out_proj_v(sentence_representation)
         var = torch.clamp(var, min=1e-8, max=1000) # following Seitzer-NeurIPS2022
 
-        return mean.squeeze(), var.squeeze(), sentence_representation
+        return mean.squeeze(), var.squeeze(), sentence_representation, output.last_hidden_state
 
 class CrossEncoderBasicModel(torch.nn.Module):
     def __init__(self, plm_name: str):
@@ -511,9 +511,11 @@ class PairedTextModelController(object):
         elif self.approach == "cross-prob":
             # self.plm_names = ["cross-encoder/stsb-roberta-base"]
             # self.plm_names = ["roberta-base", "answerdotai/ModernBERT-base"]
-            self.plm_names = ["answerdotai/ModernBERT-base", "answerdotai/ModernBERT-base"]
-            # self.plm_names = ["roberta-base", "roberta-base"]
+            # self.plm_names = ["answerdotai/ModernBERT-base", "answerdotai/ModernBERT-base"]
+            self.plm_names = ["roberta-base", "roberta-base"]
             # self.plm_names = ["roberta-base", "cardiffnlp/twitter-roberta-base-sentiment-latest"]
+            if self.plm_names[0] != "roberta-base" or self.plm_names[1] != "roberta-base":
+                warnings.warn("Between-text loss is hardcoded for roberta-base")
         else:
             raise ValueError(f"Unknown approach: {self.approach}")
 

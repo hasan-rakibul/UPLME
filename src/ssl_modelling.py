@@ -51,9 +51,60 @@ class LitSSLModel(LitPairedTextModel):
 
         return consistency
 
+    def _compute_loss_betn_texts(self, input_ids: Tensor, hidden_state: Tensor, labels: Tensor) -> Tensor:
+        # input_ids: (bsz, seq_len)
+        # hidden_state: (bsz, seq_len, hidden_dim)
+        bsz = input_ids.shape[0]
+        sep_token_id = 2 # modernbert: 50282 # FIXME: infer this from tokeniser.sep_token_id
+
+        input1_reprs, input2_reprs = [], []
+        for i in range(bsz):
+            # doing for each sample in the batch
+            input_ids_sample = input_ids[i] # (seq_len)
+            h_i = hidden_state[i] # (seq_len, hidden_dim)
+
+            sep_positions = (input_ids_sample == sep_token_id).nonzero(as_tuple=True)[0]
+
+            # if deberta
+            # token pattern: [CLS] input1 [SEP] input2 [SEP]
+            # assert len(sep_positions) == 2, f"Number of sep positions is not 2. {sep_positions}"
+            # first_sep = sep_positions[0]
+            # second_sep = sep_positions[1]
+
+            # input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
+            # input2_repr = h_i[first_sep+1:second_sep] # excluding special tokens, (second_sep-first_sep-1, hidden_dim)
+            # ^ important to not include till -1 because there could be padded stuffs
+
+            # if roberta
+            # token pattern: [CLS] input1 [SEP][SEP] input2 [SEP]
+            assert len(sep_positions) == 3, f"Number of sep positions is not 3. {sep_positions}"
+            first_sep = sep_positions[0]
+            second_sep = sep_positions[1]
+            third_sep = sep_positions[2]
+            
+            input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
+            input2_repr = h_i[second_sep+1:third_sep] # excluding special tokens, (third_sep-second_sep-1, hidden_dim)
+
+            # Pool representation
+            input1_repr = input1_repr.mean(dim=0) # (hidden_dim)
+            input2_repr = input2_repr.mean(dim=0)
+
+            input1_reprs.append(input1_repr)
+            input2_reprs.append(input2_repr)
+        
+        input1_reprs = torch.stack(input1_reprs) # (bsz, hidden_dim)
+        input2_reprs = torch.stack(input2_reprs)
+
+        # calculate loss
+        cos_sim = F.cosine_similarity(input1_reprs, input2_reprs)
+        loss = F.mse_loss(cos_sim, labels)
+        return loss
+
     def _compute_loss_lbl(
             self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, 
-            labels: Tensor, prefix: str
+            labels: Tensor, prefix: str,
+            input_ids_1: Tensor, input_ids_2: Tensor,
+            hidden_state_1: Tensor, hidden_state_2: Tensor
         ) -> tuple[Tensor, dict]:
         # l2_var = torch.linalg.norm(var_1 - var_2, ord=2)
 
@@ -72,13 +123,26 @@ class LitSSLModel(LitPairedTextModel):
 
         consistency = self.lambda_1 * self._compute_consistency_loss(mean_1, mean_2, var_1, var_2)
         
+        loss_betn_texts_1 = self._compute_loss_betn_texts(
+            input_ids=input_ids_1,
+            hidden_state=hidden_state_1,
+            labels=labels
+        )
+        loss_betn_texts_2 = self._compute_loss_betn_texts(
+            input_ids=input_ids_2,
+            hidden_state=hidden_state_2,
+            labels=labels
+        )
+        loss_betn_texts = 0.5 * (loss_betn_texts_1 + loss_betn_texts_2)
+
         # loss = var_consistency + nll
-        loss = nll + consistency
+        loss = nll + consistency + loss_betn_texts
 
         loss_dict = {
             f"{prefix}_nll": nll,
             f"{prefix}_consistency": consistency,
-            f"{prefix}_loss": loss
+            f"{prefix}_loss_betn_texts": loss_betn_texts,
+            f"{prefix}_loss": loss,
         }
 
         return loss, loss_dict
@@ -129,12 +193,13 @@ class LitSSLModel(LitPairedTextModel):
         return loss, loss_dict
 
     def training_step(self, batch: dict, batch_idx):
+
         batch_lbl = batch["lbl"] 
-        mean_1_lbl, var_1_lbl, _ = self.model_1(
+        mean_1_lbl, var_1_lbl, _, hidden_state_1 = self.model_1(
             input_ids=batch_lbl["input_ids_1"],
             attention_mask=batch_lbl["attention_mask_1"]
         )
-        mean_2_lbl, var_2_lbl, _ = self.model_2(
+        mean_2_lbl, var_2_lbl, _, hidden_state_2 = self.model_2(
             input_ids=batch_lbl["input_ids_2"],
             attention_mask=batch_lbl["attention_mask_2"]
         )
@@ -142,18 +207,22 @@ class LitSSLModel(LitPairedTextModel):
         total_loss, loss_dict = self._compute_loss_lbl(
             mean_1=mean_1_lbl, mean_2=mean_2_lbl, 
             var_1=var_1_lbl, var_2=var_2_lbl, 
-            labels=batch_lbl["labels"], prefix="train_lbl"
+            labels=batch_lbl["labels"], prefix="train_lbl",
+            input_ids_1=batch_lbl["input_ids_1"],
+            input_ids_2=batch_lbl["input_ids_2"],
+            hidden_state_1=hidden_state_1,
+            hidden_state_2=hidden_state_2
         )
         
         # global_mean is set in on_train_epoch_end, so it means "first epoch"
         # plus, if all unlabelled loss weights are 0, then it won't be used
         if hasattr(self, "global_mean") and not (self.lambda_2 == 0 and self.lambda_3 == 0):
             batch_unlbl = batch["unlbl"]
-            mean_1_unlbl, var_1_unlbl, sentence_rep_1_unlbl = self.model_1(
+            mean_1_unlbl, var_1_unlbl, sentence_rep_1_unlbl, _ = self.model_1(
                 input_ids=batch_unlbl["input_ids_1"],
                 attention_mask=batch_unlbl["attention_mask_1"]
             )
-            mean_2_unlbl, var_2_unlbl, sentence_rep_2_unlbl = self.model_2(
+            mean_2_unlbl, var_2_unlbl, sentence_rep_2_unlbl, _ = self.model_2(
                 input_ids=batch_unlbl["input_ids_2"],
                 attention_mask=batch_unlbl["attention_mask_2"]
             )
@@ -197,11 +266,11 @@ class LitSSLModel(LitPairedTextModel):
         self.train_vars.clear()
     
     def validation_step(self, batch: dict, batch_idx):
-        mean_1, var_1, _ = self.model_1(
+        mean_1, var_1, _, _ = self.model_1(
             input_ids=batch["input_ids_1"],
             attention_mask=batch["attention_mask_1"]
         )
-        mean_2, var_2, _ = self.model_2(
+        mean_2, var_2, _, _ = self.model_2(
             input_ids=batch["input_ids_2"],
             attention_mask=batch["attention_mask_2"]
         )
@@ -221,11 +290,12 @@ class LitSSLModel(LitPairedTextModel):
         all_var_2s = torch.cat([out["var_2"] for out in self.validation_outputs])
         all_labels = torch.cat([out["labels"] for out in self.validation_outputs])
         
-        _, loss_dict = self._compute_loss_lbl(
-            mean_1=all_mean_1s, mean_2=all_mean_2s,
-            var_1=all_var_1s, var_2=all_var_2s, 
-            labels=all_labels, prefix="val"
-        )
+        # FIXME: betn_text loss is not implemented for val
+        # _, loss_dict = self._compute_loss_lbl(
+        #     mean_1=all_mean_1s, mean_2=all_mean_2s,
+        #     var_1=all_var_1s, var_2=all_var_2s, 
+        #     labels=all_labels, prefix="val"
+        # )
 
         all_means = 0.5 * (all_mean_1s + all_mean_2s)
         all_vars = 0.5 * (all_var_1s + all_var_2s)
@@ -234,7 +304,7 @@ class LitSSLModel(LitPairedTextModel):
         all_vars = all_vars.to(torch.float64).cpu()
 
         log_dict = self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val")
-        log_dict.update(loss_dict)
+        # log_dict.update(loss_dict)
 
         self.log_dict(
             log_dict,
@@ -249,11 +319,11 @@ class LitSSLModel(LitPairedTextModel):
         self.validation_outputs.clear()
 
     def test_step(self, batch, batch_idx):
-        mean_1, var_1, _ = self.model_1(
+        mean_1, var_1, _, _ = self.model_1(
             input_ids=batch["input_ids_1"],
             attention_mask=batch["attention_mask_1"]
         )
-        mean_2, var_2, _ = self.model_2(
+        mean_2, var_2, _, _ = self.model_2(
             input_ids=batch["input_ids_2"],
             attention_mask=batch["attention_mask_2"]
         )
