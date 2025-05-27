@@ -95,8 +95,13 @@ class LitSSLModel(LitPairedTextModel):
         input1_reprs = torch.stack(input1_reprs) # (bsz, hidden_dim)
         input2_reprs = torch.stack(input2_reprs)
 
-        # calculate loss
+        # calculate loss        
         cos_sim = F.cosine_similarity(input1_reprs, input2_reprs)
+                # Validate label range
+        
+        assert labels.min() >= 1 and labels.max() <= 7, \
+            f"Labels should be in [1, 7], got range [{labels.min()}, {labels.max()}]"
+        labels = (labels.float() - 4.0) / 3.0 # 1 is -1, 4 is 0, 7 is 1; like cos_sim
         loss = F.mse_loss(cos_sim, labels)
         return loss
 
