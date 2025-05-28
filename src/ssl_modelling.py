@@ -51,60 +51,6 @@ class LitSSLModel(LitPairedTextModel):
 
         return consistency
 
-    def _compute_loss_betn_texts(self, input_ids: Tensor, hidden_state: Tensor, labels: Tensor) -> Tensor:
-        # input_ids: (bsz, seq_len)
-        # hidden_state: (bsz, seq_len, hidden_dim)
-        bsz = input_ids.shape[0]
-        sep_token_id = 2 # modernbert: 50282 # FIXME: infer this from tokeniser.sep_token_id
-
-        input1_reprs, input2_reprs = [], []
-        for i in range(bsz):
-            # doing for each sample in the batch
-            input_ids_sample = input_ids[i] # (seq_len)
-            h_i = hidden_state[i] # (seq_len, hidden_dim)
-
-            sep_positions = (input_ids_sample == sep_token_id).nonzero(as_tuple=True)[0]
-
-            # if deberta
-            # token pattern: [CLS] input1 [SEP] input2 [SEP]
-            # assert len(sep_positions) == 2, f"Number of sep positions is not 2. {sep_positions}"
-            # first_sep = sep_positions[0]
-            # second_sep = sep_positions[1]
-
-            # input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
-            # input2_repr = h_i[first_sep+1:second_sep] # excluding special tokens, (second_sep-first_sep-1, hidden_dim)
-            # ^ important to not include till -1 because there could be padded stuffs
-
-            # if roberta
-            # token pattern: [CLS] input1 [SEP][SEP] input2 [SEP]
-            assert len(sep_positions) == 3, f"Number of sep positions is not 3. {sep_positions}"
-            first_sep = sep_positions[0]
-            second_sep = sep_positions[1]
-            third_sep = sep_positions[2]
-            
-            input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
-            input2_repr = h_i[second_sep+1:third_sep] # excluding special tokens, (third_sep-second_sep-1, hidden_dim)
-
-            # Pool representation
-            input1_repr = input1_repr.mean(dim=0) # (hidden_dim)
-            input2_repr = input2_repr.mean(dim=0)
-
-            input1_reprs.append(input1_repr)
-            input2_reprs.append(input2_repr)
-        
-        input1_reprs = torch.stack(input1_reprs) # (bsz, hidden_dim)
-        input2_reprs = torch.stack(input2_reprs)
-
-        # calculate loss        
-        cos_sim = F.cosine_similarity(input1_reprs, input2_reprs)
-                # Validate label range
-        
-        assert labels.min() >= 1 and labels.max() <= 7, \
-            f"Labels should be in [1, 7], got range [{labels.min()}, {labels.max()}]"
-        labels = (labels.float() - 4.0) / 3.0 # 1 is -1, 4 is 0, 7 is 1; like cos_sim
-        loss = F.mse_loss(cos_sim, labels)
-        return loss
-
     def _compute_loss_lbl(
             self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, 
             labels: Tensor, prefix: str,

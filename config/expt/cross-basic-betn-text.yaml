@@ -1,0 +1,9 @@
+hydra:
+  job:
+    name: "cross-basic-betn-text-lambda1-${lambda_1}"
+
+approach: cross-basic
+is_ssl: False
+
+lambda_2: 0
+lambda_3: 0

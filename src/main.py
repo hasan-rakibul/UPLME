@@ -39,10 +39,10 @@ def main(cfg: DictConfig):
     do_tune = cfg.do_tune
     do_train = cfg.do_train
     overwrite_parent_dir = cfg.expt.overwrite_parent_dir
-    approach = cfg.approach
+    approach = cfg.expt.approach
     main_data = cfg.main_data
 
-    is_ssl = cfg.is_ssl
+    is_ssl = cfg.expt.is_ssl
 
     newsemp_train_files, newsemp_val_files, newsemp_test_files = retrieve_newsemp_file_names(cfg)
     empstories_train_files = ["data/EmpathicStories/PAIRS (train).csv"]

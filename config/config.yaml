@@ -11,6 +11,8 @@ defaults:
 
 expt:
   overwrite_parent_dir: null
+  approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
+  is_ssl: True
 
 # these are just to retrieve the correct file names for newsemp dataset.
 # actual train and val data depends on main_data
@@ -38,11 +40,9 @@ delta: null
 error_decay_factor: 0.0
 lambda_1: 0 # labelled - consistency loss
 
-approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
 do_tune: False
 do_train: True
 
-is_ssl: True 
 lbl_split: 0.1 # only for SSL
 
 # all files list that we can use for training / validation / testing

@@ -58,6 +58,8 @@ class SiameseModel(torch.nn.Module):
             sentence_representation_2 = output_2.pooler_output
         
         cos_sim = F.cosine_similarity(sentence_representation_1, sentence_representation_2)
+        raise NotImplementedError(f"Using cosine similarity in MSE loss calculation requires some transformation to be in the same range. \
+                                  which is most probably not done.")
         
         return cos_sim, None # there's no variance being modelled, just return None for compatibility
 
@@ -113,11 +115,13 @@ class CrossEncoderProbModel(torch.nn.Module):
             self.pooling = "cls"
 
         self.out_proj_m = torch.nn.Sequential(
+            torch.nn.LayerNorm(self.model.config.hidden_size),
             torch.nn.Dropout(0.1),
             torch.nn.Linear(self.model.config.hidden_size, 1)
         )
 
         self.out_proj_v = torch.nn.Sequential(
+            torch.nn.LayerNorm(self.model.config.hidden_size),
             torch.nn.Dropout(0.1),
             torch.nn.Linear(self.model.config.hidden_size, 1),
             torch.nn.Softplus()
@@ -152,7 +156,8 @@ class CrossEncoderBasicModel(torch.nn.Module):
         self.pooling = "roberta-pooler"
 
         self.out_proj = torch.nn.Sequential(
-            torch.nn.Dropout(0.1),
+            torch.nn.LayerNorm(self.model.config.hidden_size),
+            torch.nn.Dropout(0.25),
             torch.nn.Linear(self.model.config.hidden_size, 1)
         )
 
@@ -172,7 +177,11 @@ class CrossEncoderBasicModel(torch.nn.Module):
 
         y_hat = self.out_proj(sentence_representation) 
 
-        return y_hat.squeeze(), None # there's no variance being modelled, just return None for compatibility
+        return (
+            y_hat.squeeze(), 
+            None, # there's no variance being modelled, just return None for compatibility
+            output.last_hidden_state
+        )
     
 class LitPairedTextModel(L.LightningModule):
     def __init__(
@@ -267,11 +276,80 @@ class LitPairedTextModel(L.LightningModule):
 
         return self.lambda_1 * penalty_loss
     
-    def _compute_loss(self, mean: Tensor, var: Tensor | None, labels: Tensor, prefix: str) -> tuple[Tensor, dict]:
+    def _compute_loss_betn_texts(self, input_ids: Tensor, hidden_state: Tensor, labels: Tensor) -> Tensor:
+        # input_ids: (bsz, seq_len)
+        # hidden_state: (bsz, seq_len, hidden_dim)
+        bsz = input_ids.shape[0]
+        sep_token_id = 2 # modernbert: 50282 # FIXME: infer this from tokeniser.sep_token_id
+
+        input1_reprs, input2_reprs = [], []
+        for i in range(bsz):
+            # doing for each sample in the batch
+            input_ids_sample = input_ids[i] # (seq_len)
+            h_i = hidden_state[i] # (seq_len, hidden_dim)
+
+            sep_positions = (input_ids_sample == sep_token_id).nonzero(as_tuple=True)[0]
+
+            # if deberta
+            # token pattern: [CLS] input1 [SEP] input2 [SEP]
+            # assert len(sep_positions) == 2, f"Number of sep positions is not 2. {sep_positions}"
+            # first_sep = sep_positions[0]
+            # second_sep = sep_positions[1]
+
+            # input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
+            # input2_repr = h_i[first_sep+1:second_sep] # excluding special tokens, (second_sep-first_sep-1, hidden_dim)
+            # ^ important to not include till -1 because there could be padded stuffs
+
+            # if roberta
+            # token pattern: [CLS] input1 [SEP][SEP] input2 [SEP]
+            assert len(sep_positions) == 3, f"Number of sep positions is not 3. {sep_positions}"
+            first_sep = sep_positions[0]
+            second_sep = sep_positions[1]
+            third_sep = sep_positions[2]
+            
+            input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
+            input2_repr = h_i[second_sep+1:third_sep] # excluding special tokens, (third_sep-second_sep-1, hidden_dim)
+
+            # Pool representation
+            input1_repr = input1_repr.mean(dim=0) # (hidden_dim)
+            input2_repr = input2_repr.mean(dim=0)
+
+            input1_reprs.append(input1_repr)
+            input2_reprs.append(input2_repr)
+        
+        input1_reprs = torch.stack(input1_reprs) # (bsz, hidden_dim)
+        input2_reprs = torch.stack(input2_reprs)
+
+        # calculate loss        
+        cos_sim = F.cosine_similarity(input1_reprs, input2_reprs)
+                
+        # Validate label range
+        assert labels.min() >= 1 and labels.max() <= 7, \
+            f"Labels should be in [1, 7], got range [{labels.min()}, {labels.max()}]"
+        labels = (labels.float() - 4.0) / 3.0 # 1 is -1, 4 is 0, 7 is 1; like cos_sim
+        loss = F.mse_loss(cos_sim, labels)
+        return loss
+    
+    def _compute_loss(self, mean: Tensor, var: Tensor | None, labels: Tensor, prefix: str,
+                      input_ids: Tensor | None = None, hidden_state: Tensor | None = None) -> tuple[Tensor, dict]:
         if var is None:
             # Basic model with MSE loss
-            total_loss = F.mse_loss(mean, labels.squeeze())
-            loss_dict = {f"{prefix}_total_loss": total_loss}
+            mse_loss = F.mse_loss(mean, labels.squeeze())
+            loss_dict = {f"{prefix}_mse_loss": mse_loss}
+            
+            if hidden_state is not None:
+                betn_text_loss = self._compute_loss_betn_texts(
+                    input_ids=input_ids,
+                    hidden_state=hidden_state,
+                    labels=labels
+                )
+                loss_dict[f"{prefix}_betn_text_loss"] = betn_text_loss            
+            else:
+                betn_text_loss = 0.0
+
+            total_loss = mse_loss + betn_text_loss
+            loss_dict[f"{prefix}_total_loss"] = total_loss
+       
         else:
             nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
 
@@ -294,9 +372,13 @@ class LitPairedTextModel(L.LightningModule):
                 input_ids=batch['input_ids'],
                 attention_mask=batch['attention_mask']
             )
+        elif self.approach == "cross-basic":
+            mean, var, hidden_state = self.model(batch)
         else:
             mean, var = self.model(batch)
-        loss, loss_dict = self._compute_loss(mean, var, batch["labels"], prefix="train")
+        loss, loss_dict = self._compute_loss(mean, var, batch["labels"], prefix="train",
+                                             input_ids=batch['input_ids'],
+                                             hidden_state=hidden_state)
         self.log_dict(
             loss_dict,
             on_step=True,
@@ -314,6 +396,8 @@ class LitPairedTextModel(L.LightningModule):
                 input_ids=batch['input_ids'],
                 attention_mask=batch['attention_mask']
             )
+        elif self.approach == "cross-basic":
+            mean, var, _ = self.model(batch)
         else:
             mean, var = self.model(batch)
 
@@ -359,7 +443,7 @@ class LitPairedTextModel(L.LightningModule):
         else:
             all_vars = torch.cat([out["var"] for out in self.validation_outputs])
         
-        _, loss_dict = self._compute_loss(all_means, all_vars, all_labels, prefix="val")
+        # _, loss_dict = self._compute_loss(all_means, all_vars, all_labels, prefix="val")
 
         all_means = all_means.to(torch.float64).cpu()
         all_labels = all_labels.to(torch.float64).cpu()
@@ -367,7 +451,7 @@ class LitPairedTextModel(L.LightningModule):
             all_vars = all_vars.to(torch.float64).cpu()
 
         log_dict = self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val")
-        log_dict.update(loss_dict)
+        # log_dict.update(loss_dict)
 
         self.log_dict(
             log_dict,
@@ -404,6 +488,8 @@ class LitPairedTextModel(L.LightningModule):
                 input_ids=batch['input_ids'],
                 attention_mask=batch['attention_mask']
             )
+        elif self.approach == "cross-basic":
+            mean, var, _ = self.model(batch)
         else:
             mean, var = self.model(batch)
 
@@ -495,8 +581,8 @@ class PairedTextModelController(object):
         self.lambda_1 = lambda_1
         self.approach = approach
 
-        self.enable_early_stopping = False
-        self.early_stopping_start_epoch = 5
+        self.enable_early_stopping = True
+        # self.early_stopping_start_epoch = 5 # applicable for DelayedStartEarlyStopping
         self.enable_checkpointing = True
         self.save_uc_metrics = False
 
@@ -522,7 +608,8 @@ class PairedTextModelController(object):
         self.dm = PairedTextDataModule(
             delta=self.delta,
             tokeniser_plms=self.plm_names,
-            tokenise_paired_texts_each_tokeniser=True if self.approach in ["cross-prob"] else False
+            tokenise_paired_texts_each_tokeniser=True \
+                if self.approach in ["cross-basic", "cross-prob"] else False
             # TODO: check if the above should be True for other approaches
             # is_separate_tokeniser=True if self.approach in ["bi-prob", "siamese"] else False # NOTE: moving to len(plm_names) based decision
         )
@@ -557,9 +644,9 @@ class PairedTextModelController(object):
             #     verbose=True
             # )
             early_stopping = EarlyStopping(
-                monitor="val_ccc",
+                monitor="val_rmse",
                 patience=2,
-                mode="max",
+                mode="min",
                 min_delta=0,
                 verbose=True
             )
@@ -570,16 +657,16 @@ class PairedTextModelController(object):
 
         if self.enable_checkpointing:            
             # last only
-            checkpoint = ModelCheckpoint(
-                save_top_k=1 # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
-            )
-
-            # # best only
             # checkpoint = ModelCheckpoint(
-            #     save_top_k=1,
-            #     monitor="val_ccc",
-            #     mode="max"
+            #     save_top_k=1 # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
             # )
+
+            # best only
+            checkpoint = ModelCheckpoint(
+                save_top_k=1,
+                monitor="val_rmse",
+                mode="min"
+            )
             
             callbacks.append(checkpoint)
 
