@@ -53,10 +53,13 @@ class LitSSLModel(LitPairedTextModel):
 
     def _compute_loss_lbl(
             self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, 
+            sentence_rep_1: Tensor, sentence_rep_2: Tensor,
             labels: Tensor, prefix: str,
             input_ids_1: Tensor, input_ids_2: Tensor,
             hidden_state_1: Tensor, hidden_state_2: Tensor
         ) -> tuple[Tensor, dict]:
+        loss_dict = {}
+        
         # l2_var = torch.linalg.norm(var_1 - var_2, ord=2)
 
         # consistency = self.lambda_1 * F.mse_loss(var_1, var_2)
@@ -69,11 +72,19 @@ class LitSSLModel(LitPairedTextModel):
         # nll_1 = F.gaussian_nll_loss(mean_1, labels.squeeze(), var_1)
         # nll_2 = F.gaussian_nll_loss(mean_2, labels.squeeze(), var_2)
         # nll = 0.5 * (nll_1 + nll_2)
-
+        loss_dict[f"{prefix}_nll"] = nll
+        
         # var_consistency = self._compute_penalty_loss(mean, var, labels)
 
-        consistency = self.lambda_1 * self._compute_consistency_loss(mean_1, mean_2, var_1, var_2)
+        if self.lambda_1 != 0:
+            consistency = self.lambda_1 * self._compute_consistency_loss(mean_1, mean_2, var_1, var_2)
+            loss_dict[f"{prefix}_consistency"] = consistency
+        else:
+            consistency = 0
         
+        repr_consistency = F.mse_loss(sentence_rep_1, sentence_rep_2)
+        loss_dict[f"{prefix}_repr_consistency"] = repr_consistency
+
         loss_betn_texts_1 = self._compute_loss_betn_texts(
             input_ids=input_ids_1,
             hidden_state=hidden_state_1,
@@ -85,16 +96,11 @@ class LitSSLModel(LitPairedTextModel):
             labels=labels
         )
         loss_betn_texts = 0.5 * (loss_betn_texts_1 + loss_betn_texts_2)
+        loss_dict[f"{prefix}_loss_betn_texts"] = loss_betn_texts
+        
+        loss = nll + consistency + repr_consistency + loss_betn_texts
 
-        # loss = var_consistency + nll
-        loss = nll + consistency + loss_betn_texts
-
-        loss_dict = {
-            f"{prefix}_nll": nll,
-            f"{prefix}_consistency": consistency,
-            f"{prefix}_loss_betn_texts": loss_betn_texts,
-            f"{prefix}_loss": loss,
-        }
+        loss_dict[f"{prefix}_loss"] = loss
 
         return loss, loss_dict
 
@@ -146,11 +152,11 @@ class LitSSLModel(LitPairedTextModel):
     def training_step(self, batch: dict, batch_idx):
 
         batch_lbl = batch["lbl"] 
-        mean_1_lbl, var_1_lbl, _, hidden_state_1 = self.model_1(
+        mean_1_lbl, var_1_lbl, sentence_rep_1_lbl, hidden_state_1 = self.model_1(
             input_ids=batch_lbl["input_ids_1"],
             attention_mask=batch_lbl["attention_mask_1"]
         )
-        mean_2_lbl, var_2_lbl, _, hidden_state_2 = self.model_2(
+        mean_2_lbl, var_2_lbl, sentence_rep_2_lbl, hidden_state_2 = self.model_2(
             input_ids=batch_lbl["input_ids_2"],
             attention_mask=batch_lbl["attention_mask_2"]
         )
@@ -158,6 +164,7 @@ class LitSSLModel(LitPairedTextModel):
         total_loss, loss_dict = self._compute_loss_lbl(
             mean_1=mean_1_lbl, mean_2=mean_2_lbl, 
             var_1=var_1_lbl, var_2=var_2_lbl, 
+            sentence_rep_1=sentence_rep_1_lbl, sentence_rep_2=sentence_rep_2_lbl,
             labels=batch_lbl["labels"], prefix="train_lbl",
             input_ids_1=batch_lbl["input_ids_1"],
             input_ids_2=batch_lbl["input_ids_2"],

@@ -509,10 +509,12 @@ class PairedTextDataModule:
             sanitise_newsemp_labels: bool = True, add_noise: bool = False, seed: int | None = None,
             is_newsemp: bool = True
         ):
+        do_augment = True if is_newsemp else False
+        
         return self._get_dl(
             data_path_list, shuffle=True, 
             batch_size=batch_size, sanitise_newsemp_labels=sanitise_newsemp_labels, add_noise=add_noise, seed=seed,
-            is_newsemp=is_newsemp, do_augment=True
+            is_newsemp=is_newsemp, do_augment=do_augment
         )
     
     def get_val_dl(
@@ -540,12 +542,14 @@ class PairedTextDataModule:
 
     def get_ssl_dls(self, data_paths: list[str], sanitise_newsemp_labels: bool, add_noise: bool, 
                      is_newsemp: bool, lbl_split: float, seed: int, batch_size: int):
+        do_augment = True if is_newsemp else False
+
         hf_ds = self.get_hf_data(
             data_paths=data_paths,
             sanitise_newsemp_labels=sanitise_newsemp_labels,
             add_noise=add_noise,
             is_newsemp=is_newsemp,
-            do_augment=True
+            do_augment=do_augment
         )
 
         split_ds = hf_ds.train_test_split(

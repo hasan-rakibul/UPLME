@@ -14,4 +14,4 @@ singularity exec $SINGULARITY_CONTAINER bash -c "\
 source $MYSOFTWARE/.venv/bin/activate && \
 export TOKENIZERS_PARALLELISM=false && \
 python src/main.py \
-expt=ssl"
+expt=baseline-for-ssl_no_unlbl"

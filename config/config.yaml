@@ -9,10 +9,12 @@ defaults:
   - _self_ # means configs under expt here will be overwritten by expt/...yaml
   - expt: ssl
 
+# NOTE: the following are applied unless they are overwritten by the expt/xx.yaml
 expt:
   overwrite_parent_dir: null
   approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
   is_ssl: True
+  lbl_split: 0.1 # applicable only for ssl-related experiments
 
 # these are just to retrieve the correct file names for newsemp dataset.
 # actual train and val data depends on main_data
@@ -31,7 +33,7 @@ n_trials: 1
 # seeds: [0, 42, 100, 999, 1234]
 seeds: [0, 42, 100]
 
-main_data: newsemp # options: newsemp, empstories
+main_data: empstories # options: newsemp, empstories
 
 # Only keep samples if the difference between 'empathy' and 'llm_empathy' < delta
 # If delta is null (i.e, None), then we don't filter any samples
@@ -42,8 +44,6 @@ lambda_1: 0 # labelled - consistency loss
 
 do_tune: False
 do_train: True
-
-lbl_split: 0.1 # only for SSL
 
 # all files list that we can use for training / validation / testing
 2024:

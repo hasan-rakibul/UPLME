@@ -9,7 +9,6 @@ INCLUDE_PATTERNS=(
   "--include" "data/**"
   "--include" ".declare_api_key.sh"
   "--include" "analysis-and-visualisation.ipynb"
-  "--include" "notes.md"
 )
 
 echo "Select copy direction:"

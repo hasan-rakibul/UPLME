@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "cross-basic-betn-text-lambda1-${lambda_1}"
+    name: "cross-basic-no-betn-text-empstories"
 
 approach: cross-basic
 is_ssl: False

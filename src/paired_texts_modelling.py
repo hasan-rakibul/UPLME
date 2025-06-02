@@ -116,13 +116,13 @@ class CrossEncoderProbModel(torch.nn.Module):
 
         self.out_proj_m = torch.nn.Sequential(
             torch.nn.LayerNorm(self.model.config.hidden_size),
-            torch.nn.Dropout(0.1),
+            torch.nn.Dropout(0.25),
             torch.nn.Linear(self.model.config.hidden_size, 1)
         )
 
         self.out_proj_v = torch.nn.Sequential(
             torch.nn.LayerNorm(self.model.config.hidden_size),
-            torch.nn.Dropout(0.1),
+            torch.nn.Dropout(0.25),
             torch.nn.Linear(self.model.config.hidden_size, 1),
             torch.nn.Softplus()
         )
@@ -225,7 +225,7 @@ class LitPairedTextModel(L.LightningModule):
         optimiser = torch.optim.AdamW(
             params=self.parameters(),
             lr=self.lr,
-            betas=(0.0, 0.98),
+            betas=(0.9, 0.98),
             eps=1e-6,
             weight_decay=0.1
         )

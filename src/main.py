@@ -110,7 +110,7 @@ def main(cfg: DictConfig):
             approach=approach,
             main_data=main_data,
             unlbl_data_files=unlbl_data_files,
-            lbl_split=cfg.lbl_split
+            lbl_split=cfg.expt.lbl_split
         )
     else:
         modelling = PairedTextModelController(
