@@ -192,6 +192,7 @@ class LitPairedTextModel(L.LightningModule):
         save_uc_metrics: bool,
         error_decay_factor: float,
         lambda_1: float,
+        lambda_2: float,
         approach: str
     ):
         super().__init__()
@@ -215,6 +216,7 @@ class LitPairedTextModel(L.LightningModule):
 
         self.error_decay_factor = error_decay_factor
         self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
 
         self.penalty_type = "exp-decay"
 
@@ -276,7 +278,7 @@ class LitPairedTextModel(L.LightningModule):
 
         return self.lambda_1 * penalty_loss
     
-    def _compute_loss_betn_texts(self, input_ids: Tensor, hidden_state: Tensor, labels: Tensor) -> Tensor:
+    def _compute_alignment_betn_texts(self, input_ids: Tensor, hidden_state: Tensor, labels: Tensor) -> Tensor:
         # input_ids: (bsz, seq_len)
         # hidden_state: (bsz, seq_len, hidden_dim)
         bsz = input_ids.shape[0]
@@ -327,48 +329,41 @@ class LitPairedTextModel(L.LightningModule):
         assert labels.min() >= 1 and labels.max() <= 7, \
             f"Labels should be in [1, 7], got range [{labels.min()}, {labels.max()}]"
         labels = (labels.float() - 4.0) / 3.0 # 1 is -1, 4 is 0, 7 is 1; like cos_sim
-        loss = F.mse_loss(cos_sim, labels)
+        loss = self.lambda_2 * F.mse_loss(cos_sim, labels)
         return loss
     
     def _compute_loss(self, mean: Tensor, var: Tensor | None, labels: Tensor, prefix: str,
                       input_ids: Tensor | None = None, hidden_state: Tensor | None = None) -> tuple[Tensor, dict]:
+        loss_dict = {}
+        
         if var is None:
             # Basic model with MSE loss
-            mse_loss = F.mse_loss(mean, labels.squeeze())
-            loss_dict = {f"{prefix}_mse_loss": mse_loss}
-            
-            if hidden_state is not None:
-                betn_text_loss = self._compute_loss_betn_texts(
-                    input_ids=input_ids,
-                    hidden_state=hidden_state,
-                    labels=labels
-                )
-                loss_dict[f"{prefix}_betn_text_loss"] = betn_text_loss            
-            else:
-                betn_text_loss = 0.0
-
-            total_loss = mse_loss + betn_text_loss
-            loss_dict[f"{prefix}_total_loss"] = total_loss
-       
+            total_loss = F.mse_loss(mean, labels.squeeze())
+            loss_dict[f"{prefix}_mse_loss"] = total_loss
         else:
             nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
-
+            loss_dict[f"{prefix}_nll_loss"] = nll_loss
             penalty_loss = self._compute_penalty_loss(mean=mean, var=var, labels=labels)
-            
+            loss_dict[f"{prefix}_penalty_loss"] = penalty_loss
             total_loss = nll_loss + penalty_loss
 
-            # for logging purposes
-            loss_dict = {
-                f"{prefix}_nll_loss": nll_loss,
-                f"{prefix}_penalty_loss": penalty_loss,
-                f"{prefix}_total_loss": total_loss
-            }
+        if self.lambda_2 != 0:
+            assert hidden_state is not None, "Hidden state is required for alignment loss"
+            alignment_loss = self._compute_alignment_betn_texts(
+                input_ids=input_ids,
+                hidden_state=hidden_state,
+                labels=labels
+            )
+            loss_dict[f"{prefix}_alignment_loss"] = alignment_loss         
+
+            total_loss += alignment_loss
+            loss_dict[f"{prefix}_total_loss"] = total_loss
 
         return total_loss, loss_dict
     
     def training_step(self, batch, batch_idx):
         if self.approach == "cross-prob":
-            mean, var = self.model(
+            mean, var, _, hidden_state = self.model(
                 input_ids=batch['input_ids'],
                 attention_mask=batch['attention_mask']
             )
@@ -376,6 +371,8 @@ class LitPairedTextModel(L.LightningModule):
             mean, var, hidden_state = self.model(batch)
         else:
             mean, var = self.model(batch)
+            hidden_state = None
+        
         loss, loss_dict = self._compute_loss(mean, var, batch["labels"], prefix="train",
                                              input_ids=batch['input_ids'],
                                              hidden_state=hidden_state)
@@ -392,7 +389,7 @@ class LitPairedTextModel(L.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         if self.approach == "cross-prob":
-            mean, var = self.model(
+            mean, var, _, _ = self.model(
                 input_ids=batch['input_ids'],
                 attention_mask=batch['attention_mask']
             )
@@ -484,7 +481,7 @@ class LitPairedTextModel(L.LightningModule):
 
     def test_step(self, batch, batch_idx):
         if self.approach == "cross-prob":
-            mean, var = self.model(
+            mean, var, _, _ = self.model(
                 input_ids=batch['input_ids'],
                 attention_mask=batch['attention_mask']
             )
@@ -557,8 +554,10 @@ class PairedTextModelController(object):
         do_test: bool = False,
         error_decay_factor: float = 0.5,
         lambda_1: float = 0.0,
+        lambda_2: float = 0.0,
         approach: str | None = None,
-        main_data: str = "newsemp"
+        main_data: str = "newsemp",
+        plm_names: list[str] = ["roberta-base"]
     ):
         self.train_file = labelled_train_files
         self.val_file = val_files
@@ -579,6 +578,7 @@ class PairedTextModelController(object):
         self.do_test = do_test
         self.error_decay_factor = error_decay_factor
         self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
         self.approach = approach
 
         self.enable_early_stopping = True
@@ -586,24 +586,7 @@ class PairedTextModelController(object):
         self.enable_checkpointing = True
         self.save_uc_metrics = False
 
-        # other plm options: cardiffnlp/twitter-roberta-base-sentiment-latest, siebert/sentiment-roberta-large-english
-        if self.approach == "cross-basic":
-            # self.plm_names = ["cross-encoder/stsb-roberta-base"]
-            self.plm_names = ["roberta-base"]
-        elif self.approach == "siamese":
-            self.plm_names = ["facebook/bart-base", "facebook/bart-base"]
-        elif self.approach == "bi-prob":
-            self.plm_names = ["roberta-base", "roberta-base"]
-        elif self.approach == "cross-prob":
-            # self.plm_names = ["cross-encoder/stsb-roberta-base"]
-            # self.plm_names = ["roberta-base", "answerdotai/ModernBERT-base"]
-            # self.plm_names = ["answerdotai/ModernBERT-base", "answerdotai/ModernBERT-base"]
-            self.plm_names = ["roberta-base", "roberta-base"]
-            # self.plm_names = ["roberta-base", "cardiffnlp/twitter-roberta-base-sentiment-latest"]
-            if self.plm_names[0] != "roberta-base" or self.plm_names[1] != "roberta-base":
-                warnings.warn("Between-text loss is hardcoded for roberta-base")
-        else:
-            raise ValueError(f"Unknown approach: {self.approach}")
+        self.plm_names = plm_names
 
         self.dm = PairedTextDataModule(
             delta=self.delta,
@@ -732,6 +715,7 @@ class PairedTextModelController(object):
                     save_uc_metrics=self.save_uc_metrics,
                     error_decay_factor=self.error_decay_factor,
                     lambda_1=self.lambda_1,
+                    lambda_2=self.lambda_2,
                     approach=self.approach
                 )
             

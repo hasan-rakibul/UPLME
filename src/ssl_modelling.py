@@ -85,12 +85,12 @@ class LitSSLModel(LitPairedTextModel):
         repr_consistency = F.mse_loss(sentence_rep_1, sentence_rep_2)
         loss_dict[f"{prefix}_repr_consistency"] = repr_consistency
 
-        loss_betn_texts_1 = self._compute_loss_betn_texts(
+        loss_betn_texts_1 = self._compute_alignment_betn_texts(
             input_ids=input_ids_1,
             hidden_state=hidden_state_1,
             labels=labels
         )
-        loss_betn_texts_2 = self._compute_loss_betn_texts(
+        loss_betn_texts_2 = self._compute_alignment_betn_texts(
             input_ids=input_ids_2,
             hidden_state=hidden_state_2,
             labels=labels

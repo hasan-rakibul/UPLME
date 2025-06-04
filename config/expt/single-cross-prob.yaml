@@ -1,0 +1,10 @@
+hydra:
+  job:
+    name: "single-cross-prob-lambda1-${expt.lambda_1}-lambda2-${expt.lambda_2}"
+
+approach: cross-prob
+is_ssl: False
+
+lambda_1: 0 # penalty
+error_decay_factor: 0.0 # if lambda_1 != 0
+lambda_2: 0.5 # alignment

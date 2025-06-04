@@ -1,8 +1,0 @@
-hydra:
-  job:
-    name: "baseline-for-ssl-${expt.lbl_split}-lambda1-${lambda_1}-no-unlbl" # just co-training
-
-lambda_2: 0
-lambda_3: 0
-
-lbl_split: 1

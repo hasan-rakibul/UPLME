@@ -1,6 +1,7 @@
 import os
 import shutil
 import logging
+import warnings
 import transformers
 
 import hydra
@@ -35,7 +36,7 @@ def main(cfg: DictConfig):
     eval_bsz = cfg.eval_bsz
     delta = cfg.delta
     n_trials = cfg.n_trials
-    error_decay_factor = cfg.error_decay_factor
+    error_decay_factor = cfg.expt.error_decay_factor
     do_tune = cfg.do_tune
     do_train = cfg.do_train
     overwrite_parent_dir = cfg.expt.overwrite_parent_dir
@@ -43,6 +44,28 @@ def main(cfg: DictConfig):
     main_data = cfg.main_data
 
     is_ssl = cfg.expt.is_ssl
+
+    # other plm options: cardiffnlp/twitter-roberta-base-sentiment-latest, siebert/sentiment-roberta-large-english
+    if approach == "cross-basic":
+        # self.plm_names = ["cross-encoder/stsb-roberta-base"]
+        plm_names = ["roberta-base"]
+    elif approach == "siamese":
+        plm_names = ["facebook/bart-base", "facebook/bart-base"]
+    elif approach == "bi-prob":
+        plm_names = ["roberta-base", "roberta-base"]
+    elif approach == "cross-prob":
+        if is_ssl:
+            # self.plm_names = ["cross-encoder/stsb-roberta-base"]
+            # self.plm_names = ["roberta-base", "answerdotai/ModernBERT-base"]
+            # self.plm_names = ["answerdotai/ModernBERT-base", "answerdotai/ModernBERT-base"]
+            plm_names = ["roberta-base", "roberta-base"]
+            # self.plm_names = ["roberta-base", "cardiffnlp/twitter-roberta-base-sentiment-latest"]
+            if plm_names[0] != "roberta-base" or plm_names[1] != "roberta-base":
+                warnings.warn("Between-text loss is hardcoded for roberta-base")
+        else:
+            plm_names = ["roberta-base"]
+    else:
+        raise ValueError(f"Unknown approach: {approach}")
 
     newsemp_train_files, newsemp_val_files, newsemp_test_files = retrieve_newsemp_file_names(cfg)
     empstories_train_files = ["data/EmpathicStories/PAIRS (train).csv"]
@@ -102,15 +125,16 @@ def main(cfg: DictConfig):
             debug=debug,
             do_tune=do_tune,
             do_train=do_train,
-            do_test=True, # automatically, not done during hyperparameter tuning
+            do_test=cfg.do_test,
             error_decay_factor=error_decay_factor,
-            lambda_1=cfg.lambda_1,
+            lambda_1=cfg.expt.lambda_1,
             lambda_2=cfg.expt.lambda_2,
             lambda_3=cfg.expt.lambda_3,
             approach=approach,
             main_data=main_data,
             unlbl_data_files=unlbl_data_files,
-            lbl_split=cfg.expt.lbl_split
+            lbl_split=cfg.expt.lbl_split,
+            plm_names=plm_names
         )
     else:
         modelling = PairedTextModelController(
@@ -130,9 +154,11 @@ def main(cfg: DictConfig):
             do_train=do_train,
             do_test=True, # automatically, not done during hyperparameter tuning
             error_decay_factor=error_decay_factor,
-            lambda_1=cfg.lambda_1,
+            lambda_1=cfg.expt.lambda_1,
+            lambda_2=cfg.expt.lambda_2,
             approach=approach,
-            main_data=main_data
+            main_data=main_data,
+            plm_names=plm_names
         )
 
     modelling.tune_train_test(

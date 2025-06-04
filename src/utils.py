@@ -224,6 +224,11 @@ def process_seedwise_metrics(results: list, save_as: str) -> None:
     log_info(logger, f"Results saved at {save_as}")
 
     selected_cols = [col for col in results_df.columns if col.startswith("test")]
+
+    if len(selected_cols) == 0:
+        # if no test results, use val results
+        selected_cols = [col for col in results_df.columns if col.startswith("val")]
+
     # print the result, in LaTeX-table style
     log_info(logger, f"Median(Best) {' & '.join(selected_cols)}")
     log_info(logger, " & ".join([f"${median}({best})$" \

@@ -13,8 +13,12 @@ defaults:
 expt:
   overwrite_parent_dir: null
   approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
-  is_ssl: True
+  is_ssl: True # a better name: is_two_models
   lbl_split: 0.1 # applicable only for ssl-related experiments
+  lambda_1: 0 # cross-basic: penalty, ssl: consistency?
+  error_decay_factor: 0.0 # only for cross-basic if lambda_1 != 0
+  lambda_2: 0 # cross-prob: alignment loss, ssl: ?
+  lambda_3: 0 # ssl: ?
 
 # these are just to retrieve the correct file names for newsemp dataset.
 # actual train and val data depends on main_data
@@ -39,11 +43,10 @@ main_data: empstories # options: newsemp, empstories
 # If delta is null (i.e, None), then we don't filter any samples
 delta: null
 
-error_decay_factor: 0.0
-lambda_1: 0 # labelled - consistency loss
 
 do_tune: False
 do_train: True
+do_test: False # automatically, not done if do_tune is True
 
 # all files list that we can use for training / validation / testing
 2024:
