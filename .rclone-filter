@@ -1,0 +1,10 @@
+# include things we need
++ OTHERS/**
++ src/archived/**
++ src/ucvme/**
++ data/**
++ .declare_api_key.sh
++ analysis-and-visualisation.ipynb
+
+# exclue-everything
+- *

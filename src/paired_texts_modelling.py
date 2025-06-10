@@ -796,27 +796,28 @@ class PairedTextModelController(object):
         process_seedwise_metrics(results, save_as)
 
     def optuna_objective(self, trial: optuna.trial.Trial, optuna_seed: int, optuna_log_dir: str) -> float:
-        self.lr = trial.suggest_categorical("lr", [1e-5, 2e-5, 3e-5, 4e-5])
-        self.train_bsz = trial.suggest_int("train_bsz", 8, 32, step=8)
+        # self.lr = trial.suggest_categorical("lr", [1e-5, 2e-5, 3e-5, 4e-5])
+        # self.train_bsz = trial.suggest_int("train_bsz", 8, 32, step=8)
 
+        self.lambda_1 = trial.suggest_float("lambda_1", 0.0, 100.0)
         self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
-        self.lambda_1 = trial.suggest_float("loss_weight", 0.0, 100.0)
+        self.lambda_2 = trial.suggest_float("lambda_2", 0.0, 100.0)
 
-        pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_ccc")
+        pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_rmse")
         _, metrics = self._seed_wise_train_validate(
             seed=optuna_seed,
             curr_log_dir=optuna_log_dir,
             extra_callbacks=[pruning_callback]
         )
 
-        return metrics["val_ccc"]
+        return metrics["val_rmse"]
 
     def tune_train_test(self, n_trials: int, parent_log_dir: str, seeds: int = 0) -> None:
         if self.do_tune:
             optuna_log_dir = os.path.join(parent_log_dir, "optuna_logs")
             os.makedirs(optuna_log_dir, exist_ok=True)
             study = optuna.create_study(
-                direction="maximize",
+                direction="minimize",
                 pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5),
                 study_name=self.expt_name,
                 storage=f"sqlite:///{optuna_log_dir}/optuna.db",

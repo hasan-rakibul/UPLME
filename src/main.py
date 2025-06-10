@@ -152,7 +152,7 @@ def main(cfg: DictConfig):
             debug=debug,
             do_tune=do_tune,
             do_train=do_train,
-            do_test=True, # automatically, not done during hyperparameter tuning
+            do_test=cfg.do_test,
             error_decay_factor=error_decay_factor,
             lambda_1=cfg.expt.lambda_1,
             lambda_2=cfg.expt.lambda_2,
@@ -170,8 +170,12 @@ def main(cfg: DictConfig):
     # clean-up
     if overwrite_parent_dir is not None:
         shutil.move(os.path.join(current_run_log_dir, f"{expt_name}.log"), os.path.join(parent_log_dir, "new-run.log"))
-        shutil.rmtree(current_run_log_dir) # because results are saved in earlier log dir
-        log_info(logger, f"Deleted {current_run_log_dir}")
+        if cfg.do_tune:
+            # maybe there are other files to move
+            pass
+        else:
+            shutil.rmtree(current_run_log_dir) # because results are saved in earlier log dir
+            log_info(logger, f"Deleted {current_run_log_dir}")
     if debug:
         shutil.rmtree(parent_log_dir)
         log_info(logger, f"Deleted {parent_log_dir}")
