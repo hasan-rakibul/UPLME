@@ -810,6 +810,9 @@ class PairedTextModelController(object):
             extra_callbacks=[pruning_callback]
         )
 
+        # releasing the memory - trying to solve that OOM issue with slurm job 
+        torch.cuda.empty_cache()
+
         return metrics["val_rmse"]
 
     def tune_train_test(self, n_trials: int, parent_log_dir: str, seeds: int = 0) -> None:
