@@ -20,7 +20,7 @@ from utils import log_info, beta_nll_loss
 logger = logging.getLogger(__name__)
 
 class LitSSLModel(LitPairedTextModel):
-    def __init__(self, lambda_2: float, lambda_3: float, *args, **kwargs):
+    def __init__(self, lambda_3: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         if self.approach == "cross-prob":
@@ -29,8 +29,8 @@ class LitSSLModel(LitPairedTextModel):
         else:
             raise ValueError(f"Invalid or not-implemented approach: {self.approach}")
         
-        self.lambda_2 = lambda_2
         self.lambda_3 = lambda_3
+        self.num_passes = 5
 
         # self.hparams.error_decay_factor = None # No penalty is added here yet
         # self.penalty_type = None
@@ -53,7 +53,7 @@ class LitSSLModel(LitPairedTextModel):
 
     def _compute_loss_lbl(
             self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, 
-            sentence_rep_1: Tensor, sentence_rep_2: Tensor,
+            # sentence_rep_1: Tensor, sentence_rep_2: Tensor,
             labels: Tensor, prefix: str,
             input_ids_1: Tensor, input_ids_2: Tensor,
             hidden_state_1: Tensor, hidden_state_2: Tensor
@@ -64,14 +64,20 @@ class LitSSLModel(LitPairedTextModel):
 
         # consistency = self.lambda_1 * F.mse_loss(var_1, var_2)
 
-        mean = 0.5 * (mean_1 + mean_2)
-        var = 0.5 * (var_1 + var_2)
-        # nll = F.gaussian_nll_loss(mean, labels.squeeze(), var)
-        nll = beta_nll_loss(mean, var, labels)
+        # mean = 0.5 * (mean_1 + mean_2)
+        # var = 0.5 * (var_1 + var_2)
+        # # nll = F.gaussian_nll_loss(mean, labels.squeeze(), var)
+        # nll = beta_nll_loss(mean, var, labels)
 
         # nll_1 = F.gaussian_nll_loss(mean_1, labels.squeeze(), var_1)
         # nll_2 = F.gaussian_nll_loss(mean_2, labels.squeeze(), var_2)
         # nll = 0.5 * (nll_1 + nll_2)
+
+        avg_var = 0.5 * (var_1 + var_2)
+        nll_1 = beta_nll_loss(mean_1, avg_var, labels)
+        nll_2 = beta_nll_loss(mean_2, avg_var, labels)
+        nll = 0.5 * (nll_1 + nll_2)
+        
         loss_dict[f"{prefix}_nll"] = nll
         
         # var_consistency = self._compute_penalty_loss(mean, var, labels)
@@ -82,8 +88,8 @@ class LitSSLModel(LitPairedTextModel):
         else:
             consistency = 0
         
-        repr_consistency = F.mse_loss(sentence_rep_1, sentence_rep_2)
-        loss_dict[f"{prefix}_repr_consistency"] = repr_consistency
+        # repr_consistency = F.mse_loss(sentence_rep_1, sentence_rep_2)
+        # loss_dict[f"{prefix}_repr_consistency"] = repr_consistency
 
         loss_betn_texts_1 = self._compute_alignment_betn_texts(
             input_ids=input_ids_1,
@@ -98,14 +104,17 @@ class LitSSLModel(LitPairedTextModel):
         loss_betn_texts = 0.5 * (loss_betn_texts_1 + loss_betn_texts_2)
         loss_dict[f"{prefix}_loss_betn_texts"] = loss_betn_texts
         
-        loss = nll + consistency + repr_consistency + loss_betn_texts
+        # loss = nll + consistency + repr_consistency + loss_betn_texts
+        loss = nll + consistency + loss_betn_texts
 
         loss_dict[f"{prefix}_loss"] = loss
 
         return loss, loss_dict
 
     def _compute_loss_unlbl(
-            self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, 
+            self, mean_1: Tensor, mean_2: Tensor, 
+            var_1: Tensor, var_2: Tensor,
+            pseudo_lbl: Tensor, pseudo_var: Tensor,
             sentence_rep_1: Tensor, sentence_rep_2: Tensor,
             prefix: str
         ) -> tuple[Tensor, dict]:
@@ -114,8 +123,8 @@ class LitSSLModel(LitPairedTextModel):
 
         # l2_var = torch.linalg.norm(var_1 - var_2, ord=2)
 
-        mean = 0.5 * (mean_1 + mean_2)
-        var = 0.5 * (var_1 + var_2)
+        # mean = 0.5 * (mean_1 + mean_2)
+        # var = 0.5 * (var_1 + var_2)
         # loss = F.kl_div(F.log_softmax(mean_1, dim=1), F.softmax(mean_2, dim=1), reduction="batchmean")
         # loss = F.gaussian_nll_loss(mean_1, mean, var) + F.gaussian_nll_loss(mean_2, mean, var)
         # consistency = self.lambda_2 * (F.mse_loss(var_1, var) + F.mse_loss(var_2, var))
@@ -124,9 +133,19 @@ class LitSSLModel(LitPairedTextModel):
         # nll_2 = torch.mean(torch.exp(-var_1) * F.gaussian_nll_loss(mean_2, mean_1, var_2, reduction="none"))
         # loss = 0.5 * (nll_1 + nll_2)
 
+        nll_1 = beta_nll_loss(mean_1, pseudo_var, pseudo_lbl)
+        nll_2 = beta_nll_loss(mean_2, pseudo_var, pseudo_lbl)
+        nll = 0.5 * (nll_1 + nll_2)
+
+        var_mse_0 = F.mse_loss(var_1, pseudo_var)
+        var_mse_1 = F.mse_loss(var_2, pseudo_var)
+        var_mse = 0.5 * (var_mse_0 + var_mse_1)
+
+        pseudo_supervision = self.lambda_2 * (nll + var_mse)
+
         # loss = var_consistency + nll
 
-        consistency = self.lambda_2 * self._compute_consistency_loss(mean_1, mean_2, var_1, var_2)
+        # consistency = self.lambda_2 * self._compute_consistency_loss(mean_1, mean_2, var_1, var_2)
         
         repr_consistency = self.lambda_3 * F.mse_loss(sentence_rep_1, sentence_rep_2)
 
@@ -138,10 +157,12 @@ class LitSSLModel(LitPairedTextModel):
 
         # loss = consistency + domain_gap
 
-        loss = consistency + repr_consistency
+        # loss = consistency + repr_consistency
+        loss = pseudo_supervision + repr_consistency
 
         loss_dict = {
-            f"{prefix}_consistency": consistency,
+            # f"{prefix}_consistency": consistency,
+            f"{prefix}_pseudo_supervision": pseudo_supervision,
             # f"{prefix}_domain_gap": domain_gap,
             f"{prefix}_repr_consistency": repr_consistency,
             f"{prefix}_loss": loss
@@ -164,18 +185,19 @@ class LitSSLModel(LitPairedTextModel):
         total_loss, loss_dict = self._compute_loss_lbl(
             mean_1=mean_1_lbl, mean_2=mean_2_lbl, 
             var_1=var_1_lbl, var_2=var_2_lbl, 
-            sentence_rep_1=sentence_rep_1_lbl, sentence_rep_2=sentence_rep_2_lbl,
+            # sentence_rep_1=sentence_rep_1_lbl, sentence_rep_2=sentence_rep_2_lbl,
             labels=batch_lbl["labels"], prefix="train_lbl",
             input_ids_1=batch_lbl["input_ids_1"],
             input_ids_2=batch_lbl["input_ids_2"],
             hidden_state_1=hidden_state_1,
             hidden_state_2=hidden_state_2
         )
-        
+
         # global_mean is set in on_train_epoch_end, so it means "first epoch"
         # plus, if all unlabelled loss weights are 0, then it won't be used
         if hasattr(self, "global_mean") and not (self.lambda_2 == 0 and self.lambda_3 == 0):
             batch_unlbl = batch["unlbl"]
+
             mean_1_unlbl, var_1_unlbl, sentence_rep_1_unlbl, _ = self.model_1(
                 input_ids=batch_unlbl["input_ids_1"],
                 attention_mask=batch_unlbl["attention_mask_1"]
@@ -184,10 +206,39 @@ class LitSSLModel(LitPairedTextModel):
                 input_ids=batch_unlbl["input_ids_2"],
                 attention_mask=batch_unlbl["attention_mask_2"]
             )
+
+            mean_1s = []
+            mean_2s = []
+            var_1s = []
+            var_2s = []
+
+            for _ in range(self.num_passes):
+                mean_1_, var_1_, _, _ = self.model_1(
+                    input_ids=batch_unlbl["input_ids_1"],
+                    attention_mask=batch_unlbl["attention_mask_1"]
+                )
+                mean_2_, var_2_, _, _ = self.model_2(
+                    input_ids=batch_unlbl["input_ids_2"],
+                    attention_mask=batch_unlbl["attention_mask_2"]
+                )
+
+                mean_1s.append(mean_1_)
+                var_1s.append(var_1_)
+                mean_2s.append(mean_2_)
+                var_2s.append(var_2_)
             
+            mean_1_ensemble = torch.stack(mean_1s, dim=0).mean(dim=0) # (num_passes, bsz) -> (bsz)
+            mean_2_ensemble = torch.stack(mean_2s, dim=0).mean(dim=0)
+            var_1_ensemble = torch.stack(var_1s, dim=0).mean(dim=0)
+            var_2_ensemble = torch.stack(var_2s, dim=0).mean(dim=0)
+
+            pseudo_lbl = 0.5 * (mean_1_ensemble + mean_2_ensemble)
+            pseudo_var = 0.5 * (var_1_ensemble + var_2_ensemble)
+
             loss_unlbl, loss_dict_unlbl = self._compute_loss_unlbl(
                 mean_1=mean_1_unlbl, mean_2=mean_2_unlbl, 
-                var_1=var_1_unlbl, var_2=var_2_unlbl, 
+                var_1=var_1_unlbl, var_2=var_2_unlbl,
+                pseudo_lbl=pseudo_lbl, pseudo_var=pseudo_var, 
                 sentence_rep_1=sentence_rep_1_unlbl, 
                 sentence_rep_2=sentence_rep_2_unlbl,
                 prefix="train_unlbl"
@@ -224,70 +275,79 @@ class LitSSLModel(LitPairedTextModel):
         self.train_vars.clear()
     
     def validation_step(self, batch: dict, batch_idx):
-        mean_1, var_1, _, _ = self.model_1(
-            input_ids=batch["input_ids_1"],
-            attention_mask=batch["attention_mask_1"]
-        )
-        mean_2, var_2, _, _ = self.model_2(
-            input_ids=batch["input_ids_2"],
-            attention_mask=batch["attention_mask_2"]
+        mean_1s, mean_2s, var_1s, var_2s = [], [], [], []
+        
+        for _ in range(self.num_passes):
+            
+            mean_1, var_1, _, hidden_state_1 = self.model_1(
+                input_ids=batch["input_ids_1"],
+                attention_mask=batch["attention_mask_1"]
+            )
+            mean_2, var_2, _, hidden_state_2 = self.model_2(
+                input_ids=batch["input_ids_2"],
+                attention_mask=batch["attention_mask_2"]
+            )
+
+            mean_1s.append(mean_1)
+            mean_2s.append(mean_2)
+            var_1s.append(var_1)
+            var_2s.append(var_2)
+
+        mean_1_ensemble = torch.stack(mean_1s, dim=0).mean(dim=0) # (bsz)
+        mean_2_ensemble = torch.stack(mean_2s, dim=0).mean(dim=0)
+        var_1_ensemble = torch.stack(var_1s, dim=0).mean(dim=0)
+        var_2_ensemble = torch.stack(var_2s, dim=0).mean(dim=0)
+
+        _, loss_dict = self._compute_loss_lbl(
+            mean_1=mean_1_ensemble, mean_2=mean_2_ensemble,
+            var_1=var_1_ensemble, var_2=var_2_ensemble,
+            labels=batch["labels"], prefix="val",
+            input_ids_1=batch["input_ids_1"],
+            input_ids_2=batch["input_ids_2"],
+            hidden_state_1=hidden_state_1,
+            hidden_state_2=hidden_state_2
         )
         
+        self.log_dict(
+            loss_dict, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True,
+            batch_size=batch["labels"].shape[0]
+        )
+
+        mean = 0.5 * (mean_1_ensemble + mean_2_ensemble)
+        var = 0.5 * (var_1_ensemble + var_2_ensemble)
+
         self.validation_outputs.append({
-            "mean_1": mean_1.unsqueeze(0) if mean_1.dim() == 0 else mean_1,
-            "mean_2": mean_2.unsqueeze(0) if mean_2.dim() == 0 else mean_2,
-            "var_1": var_1.unsqueeze(0) if var_1.dim() == 0 else var_1,
-            "var_2": var_2.unsqueeze(0) if var_2.dim() == 0 else var_2,
+            "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
+            "var": var.unsqueeze(0) if var.dim() == 0 else var,
             "labels": batch["labels"].unsqueeze(0) if batch["labels"].dim() == 0 else batch["labels"]
         })
-    
-    def on_validation_epoch_end(self):
-        all_mean_1s = torch.cat([out["mean_1"] for out in self.validation_outputs])
-        all_mean_2s = torch.cat([out["mean_2"] for out in self.validation_outputs])
-        all_var_1s = torch.cat([out["var_1"] for out in self.validation_outputs])
-        all_var_2s = torch.cat([out["var_2"] for out in self.validation_outputs])
-        all_labels = torch.cat([out["labels"] for out in self.validation_outputs])
-        
-        # FIXME: betn_text loss is not implemented for val
-        # _, loss_dict = self._compute_loss_lbl(
-        #     mean_1=all_mean_1s, mean_2=all_mean_2s,
-        #     var_1=all_var_1s, var_2=all_var_2s, 
-        #     labels=all_labels, prefix="val"
-        # )
-
-        all_means = 0.5 * (all_mean_1s + all_mean_2s)
-        all_vars = 0.5 * (all_var_1s + all_var_2s)
-        all_means = all_means.to(torch.float64).cpu()
-        all_labels = all_labels.to(torch.float64).cpu()
-        all_vars = all_vars.to(torch.float64).cpu()
-
-        log_dict = self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val")
-        # log_dict.update(loss_dict)
-
-        self.log_dict(
-            log_dict,
-            on_step=False, # must be False
-            on_epoch=True, # must be True
-            logger=True,
-            prog_bar=True,
-            sync_dist=True,
-            batch_size=self.validation_outputs[0]["labels"].shape[0]
-        )
-
-        self.validation_outputs.clear()
 
     def test_step(self, batch, batch_idx):
-        mean_1, var_1, _, _ = self.model_1(
-            input_ids=batch["input_ids_1"],
-            attention_mask=batch["attention_mask_1"]
-        )
-        mean_2, var_2, _, _ = self.model_2(
-            input_ids=batch["input_ids_2"],
-            attention_mask=batch["attention_mask_2"]
-        )
+        mean_1s, mean_2s, var_1s, var_2s = [], [], [], []
 
-        mean = 0.5 * (mean_1 + mean_2)
-        var = 0.5 * (var_1 + var_2)
+        for _ in range(self.num_passes):
+            
+            mean_1, var_1, _, _ = self.model_1(
+                input_ids=batch["input_ids_1"],
+                attention_mask=batch["attention_mask_1"]
+            )
+            mean_2, var_2, _, _ = self.model_2(
+                input_ids=batch["input_ids_2"],
+                attention_mask=batch["attention_mask_2"]
+            )
+
+            mean_1s.append(mean_1)
+            mean_2s.append(mean_2)
+            var_1s.append(var_1)
+            var_2s.append(var_2)
+
+        mean_1_ensemble = torch.stack(mean_1s, dim=0).mean(dim=0) # (bsz)
+        mean_2_ensemble = torch.stack(mean_2s, dim=0).mean(dim=0)
+        var_1_ensemble = torch.stack(var_1s, dim=0).mean(dim=0)
+        var_2_ensemble = torch.stack(var_2s, dim=0).mean(dim=0)
+
+        mean = 0.5 * (mean_1_ensemble + mean_2_ensemble)
+        var = 0.5 * (var_1_ensemble + var_2_ensemble)
 
         outputs = {
             "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,

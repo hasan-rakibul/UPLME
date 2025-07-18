@@ -4,7 +4,6 @@
 + src/ucvme/**
 + data/**
 + .declare_api_key.sh
-+ .rclone.sh
 + analysis-and-visualisation.ipynb
 
 # exclue-everything

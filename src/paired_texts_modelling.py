@@ -402,11 +402,26 @@ class LitPairedTextModel(L.LightningModule):
             var = var.unsqueeze(0) if var.dim() == 0 else var
         # Note: it's important to check dim and unsqeeze as we get 0-dim if the last batch has only one sample
         # Otherwise, we get an error when concatenating tensors later
+        
+        mean = mean.unsqueeze(0) if mean.dim() == 0 else mean
+        labels = batch["labels"].unsqueeze(0) if batch["labels"].dim() == 0 else batch["labels"]
         self.validation_outputs.append({
-            "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
+            "mean": mean,
             "var": var,
-            "labels": batch["labels"].unsqueeze(0) if batch["labels"].dim() == 0 else batch["labels"]
+            "labels": labels
         })
+
+        _, loss_dict = self._compute_loss(mean=mean, var=var, labels=labels, prefix="val")
+        self.log_dict(
+            loss_dict,
+            on_step=True,
+            on_epoch=False,
+            logger=True,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=labels.shape[0]
+        )
+
 
     def _calculate_metrics(self, mean: Tensor, var: Tensor, label: Tensor, mode: str) -> dict:
         # requires the tensors to be on the correct device as these are used for early stopping, checkpointing, etc.
@@ -439,8 +454,6 @@ class LitPairedTextModel(L.LightningModule):
             all_vars = None
         else:
             all_vars = torch.cat([out["var"] for out in self.validation_outputs])
-        
-        # _, loss_dict = self._compute_loss(all_means, all_vars, all_labels, prefix="val")
 
         all_means = all_means.to(torch.float64).cpu()
         all_labels = all_labels.to(torch.float64).cpu()
@@ -448,7 +461,6 @@ class LitPairedTextModel(L.LightningModule):
             all_vars = all_vars.to(torch.float64).cpu()
 
         log_dict = self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val")
-        # log_dict.update(loss_dict)
 
         self.log_dict(
             log_dict,
@@ -555,7 +567,7 @@ class PairedTextModelController(object):
         error_decay_factor: float = 0.5,
         lambda_1: float = 0.0,
         lambda_2: float = 0.0,
-        approach: str | None = None,
+        approach: str = "cross-prob",
         main_data: str = "newsemp",
         plm_names: list[str] = ["roberta-base"]
     ):
@@ -815,7 +827,7 @@ class PairedTextModelController(object):
 
         return metrics["val_rmse"]
 
-    def tune_train_test(self, n_trials: int, parent_log_dir: str, seeds: int = 0) -> None:
+    def tune_train_test(self, n_trials: int, parent_log_dir: str, seeds: list[int] = [0]) -> None:
         if self.do_tune:
             optuna_log_dir = os.path.join(parent_log_dir, "optuna_logs")
             os.makedirs(optuna_log_dir, exist_ok=True)
