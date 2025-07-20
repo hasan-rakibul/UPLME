@@ -477,7 +477,7 @@ class PairedTextDataModule:
     def _get_dl(
             self, data_paths: list[str], shuffle: bool, batch_size: int, 
             sanitise_newsemp_labels: bool, add_noise: bool, seed: int | None = None,
-            is_newsemp: bool = True, do_augment: bool = False
+            is_newsemp: bool = True, do_augment: bool = False, lbl_split: float = 1.0
         ):
 
         if shuffle:
@@ -485,7 +485,7 @@ class PairedTextDataModule:
             g = torch.Generator()
             g.manual_seed(seed)
 
-        hf_data = self.get_hf_data(
+        hf_ds = self.get_hf_data(
             data_paths=data_paths,
             sanitise_newsemp_labels=sanitise_newsemp_labels,
             add_noise=add_noise,
@@ -493,8 +493,16 @@ class PairedTextDataModule:
             do_augment=do_augment
         )
 
+        if lbl_split < 1.0:
+            split_ds = hf_ds.train_test_split(
+                train_size=lbl_split,
+                shuffle=True,
+                seed=seed
+            )
+            hf_ds = split_ds["train"] # for baseline (of ssl) experiments, we'd only use x% data for training
+
         return DataLoader(
-            hf_data,
+            hf_ds,
             batch_size=batch_size, 
             shuffle=shuffle,
             collate_fn=self.data_collator,
@@ -507,14 +515,14 @@ class PairedTextDataModule:
     def get_train_dl(
             self, data_path_list: list, batch_size: int,
             sanitise_newsemp_labels: bool = True, add_noise: bool = False, seed: int | None = None,
-            is_newsemp: bool = True
+            is_newsemp: bool = True, lbl_split: float = 1.0
         ):
         do_augment = True if is_newsemp else False
         
         return self._get_dl(
             data_path_list, shuffle=True, 
             batch_size=batch_size, sanitise_newsemp_labels=sanitise_newsemp_labels, add_noise=add_noise, seed=seed,
-            is_newsemp=is_newsemp, do_augment=do_augment
+            is_newsemp=is_newsemp, do_augment=do_augment, lbl_split=lbl_split
         )
     
     def get_val_dl(

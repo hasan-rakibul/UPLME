@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "two-models-no-ssl-${expt.lbl_split}-lambda1-${lambda_1}"
+    name: "lambda1-${expt.lambda_1}"
 
 lambda_2: 0
 lambda_3: 0

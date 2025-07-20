@@ -1,9 +1,8 @@
 hydra:
   job:
-    name: "cross-basic-no-betn-text-empstories"
+    name: "lambda2-${expt.lambda_2}"
 
 approach: cross-basic
 is_ssl: False
 
-lambda_2: 0
-lambda_3: 0
+lambda_2: 0 # alignment loss

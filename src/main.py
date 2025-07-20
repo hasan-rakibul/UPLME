@@ -99,7 +99,7 @@ def main(cfg: DictConfig):
         expt_name = expt_name[9:] # remove the hh-mm-ss_ prefix
 
     debug = False
-    if expt_name.startswith("debug"):
+    if "debug" in expt_name.lower():
         debug = True
         log_info(logger, "Debug mode")
         logger.setLevel(logging.DEBUG)
@@ -127,6 +127,7 @@ def main(cfg: DictConfig):
             do_train=do_train,
             do_test=cfg.do_test,
             error_decay_factor=error_decay_factor,
+            lambda_0=cfg.expt.lambda_0,
             lambda_1=cfg.expt.lambda_1,
             lambda_2=cfg.expt.lambda_2,
             lambda_3=cfg.expt.lambda_3,
@@ -158,6 +159,7 @@ def main(cfg: DictConfig):
             lambda_2=cfg.expt.lambda_2,
             approach=approach,
             main_data=main_data,
+            lbl_split=cfg.expt.lbl_split,
             plm_names=plm_names
         )
 

@@ -193,7 +193,8 @@ class LitPairedTextModel(L.LightningModule):
         error_decay_factor: float,
         lambda_1: float,
         lambda_2: float,
-        approach: str
+        approach: str,
+        sep_token_id: int # required for alignment loss
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -217,6 +218,7 @@ class LitPairedTextModel(L.LightningModule):
         self.error_decay_factor = error_decay_factor
         self.lambda_1 = lambda_1
         self.lambda_2 = lambda_2
+        self.sep_token_id = sep_token_id
 
         self.penalty_type = "exp-decay"
 
@@ -282,7 +284,6 @@ class LitPairedTextModel(L.LightningModule):
         # input_ids: (bsz, seq_len)
         # hidden_state: (bsz, seq_len, hidden_dim)
         bsz = input_ids.shape[0]
-        sep_token_id = 2 # modernbert: 50282 # FIXME: infer this from tokeniser.sep_token_id
 
         input1_reprs, input2_reprs = [], []
         for i in range(bsz):
@@ -290,7 +291,7 @@ class LitPairedTextModel(L.LightningModule):
             input_ids_sample = input_ids[i] # (seq_len)
             h_i = hidden_state[i] # (seq_len, hidden_dim)
 
-            sep_positions = (input_ids_sample == sep_token_id).nonzero(as_tuple=True)[0]
+            sep_positions = (input_ids_sample == self.sep_token_id).nonzero(as_tuple=True)[0]
 
             # if deberta
             # token pattern: [CLS] input1 [SEP] input2 [SEP]
@@ -569,6 +570,7 @@ class PairedTextModelController(object):
         lambda_2: float = 0.0,
         approach: str = "cross-prob",
         main_data: str = "newsemp",
+        lbl_split: float = 1.0,
         plm_names: list[str] = ["roberta-base"]
     ):
         self.train_file = labelled_train_files
@@ -594,11 +596,12 @@ class PairedTextModelController(object):
         self.approach = approach
 
         self.enable_early_stopping = True
-        # self.early_stopping_start_epoch = 5 # applicable for DelayedStartEarlyStopping
+        self.early_stopping_start_epoch = 5 # applicable for DelayedStartEarlyStopping
         self.enable_checkpointing = True
         self.save_uc_metrics = False
 
         self.plm_names = plm_names
+        self.lbl_split = lbl_split
 
         self.dm = PairedTextDataModule(
             delta=self.delta,
@@ -630,21 +633,21 @@ class PairedTextModelController(object):
         callbacks = []
 
         if self.enable_early_stopping:
-            # early_stopping = DelayedStartEarlyStopping(
-            #     start_epoch=self.early_stopping_start_epoch,
-            #     monitor="val_ccc",
-            #     patience=2,
-            #     mode="max",
-            #     min_delta=0,
-            #     verbose=True
-            # )
-            early_stopping = EarlyStopping(
-                monitor="val_rmse",
+            early_stopping = DelayedStartEarlyStopping(
+                start_epoch=self.early_stopping_start_epoch,
+                monitor="val_ccc",
                 patience=2,
-                mode="min",
+                mode="max",
                 min_delta=0,
                 verbose=True
             )
+            # early_stopping = EarlyStopping(
+            #     monitor="val_rmse",
+            #     patience=2,
+            #     mode="min",
+            #     min_delta=0,
+            #     verbose=True
+            # )
 
             callbacks.append(early_stopping)
         else:
@@ -652,16 +655,16 @@ class PairedTextModelController(object):
 
         if self.enable_checkpointing:            
             # last only
-            # checkpoint = ModelCheckpoint(
-            #     save_top_k=1 # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
-            # )
+            checkpoint = ModelCheckpoint(
+                save_top_k=1 # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
+            )
 
             # best only
-            checkpoint = ModelCheckpoint(
-                save_top_k=1,
-                monitor="val_rmse",
-                mode="min"
-            )
+            # checkpoint = ModelCheckpoint(
+            #     save_top_k=1,
+            #     monitor="val_ccc",
+            #     mode="max"
+            # )
             
             callbacks.append(checkpoint)
 
@@ -705,7 +708,8 @@ class PairedTextModelController(object):
             sanitise_newsemp_labels=True,
             add_noise=False,
             seed=seed,
-            is_newsemp=self.is_newsemp_main
+            is_newsemp=self.is_newsemp_main,
+            lbl_split=self.lbl_split
         )
 
         trainer = self._prepare_trainer(curr_log_dir=curr_log_dir, extra_callbacks=extra_callbacks)
@@ -728,7 +732,8 @@ class PairedTextModelController(object):
                     error_decay_factor=self.error_decay_factor,
                     lambda_1=self.lambda_1,
                     lambda_2=self.lambda_2,
-                    approach=self.approach
+                    approach=self.approach,
+                    sep_token_id=self.dm.tokeniser.sep_token_id
                 )
             
             trainer.fit(

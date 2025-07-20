@@ -20,7 +20,7 @@ from utils import log_info, beta_nll_loss
 logger = logging.getLogger(__name__)
 
 class LitSSLModel(LitPairedTextModel):
-    def __init__(self, lambda_3: float, *args, **kwargs):
+    def __init__(self, lambda_0: float, lambda_3: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         if self.approach == "cross-prob":
@@ -29,6 +29,7 @@ class LitSSLModel(LitPairedTextModel):
         else:
             raise ValueError(f"Invalid or not-implemented approach: {self.approach}")
         
+        self.lambda_0 = lambda_0
         self.lambda_3 = lambda_3
         self.num_passes = 5
 
@@ -76,7 +77,7 @@ class LitSSLModel(LitPairedTextModel):
         avg_var = 0.5 * (var_1 + var_2)
         nll_1 = beta_nll_loss(mean_1, avg_var, labels)
         nll_2 = beta_nll_loss(mean_2, avg_var, labels)
-        nll = 0.5 * (nll_1 + nll_2)
+        nll = self.lambda_0 * 0.5 * (nll_1 + nll_2)
         
         loss_dict[f"{prefix}_nll"] = nll
         
@@ -173,11 +174,11 @@ class LitSSLModel(LitPairedTextModel):
     def training_step(self, batch: dict, batch_idx):
 
         batch_lbl = batch["lbl"] 
-        mean_1_lbl, var_1_lbl, sentence_rep_1_lbl, hidden_state_1 = self.model_1(
+        mean_1_lbl, var_1_lbl, _, hidden_state_1 = self.model_1(
             input_ids=batch_lbl["input_ids_1"],
             attention_mask=batch_lbl["attention_mask_1"]
         )
-        mean_2_lbl, var_2_lbl, sentence_rep_2_lbl, hidden_state_2 = self.model_2(
+        mean_2_lbl, var_2_lbl, _, hidden_state_2 = self.model_2(
             input_ids=batch_lbl["input_ids_2"],
             attention_mask=batch_lbl["attention_mask_2"]
         )
@@ -195,7 +196,8 @@ class LitSSLModel(LitPairedTextModel):
 
         # global_mean is set in on_train_epoch_end, so it means "first epoch"
         # plus, if all unlabelled loss weights are 0, then it won't be used
-        if hasattr(self, "global_mean") and not (self.lambda_2 == 0 and self.lambda_3 == 0):
+        # if hasattr(self, "global_mean") and not (self.lambda_2 == 0 and self.lambda_3 == 0):
+        if not (self.lambda_2 == 0 and self.lambda_3 == 0):
             batch_unlbl = batch["unlbl"]
 
             mean_1_unlbl, var_1_unlbl, sentence_rep_1_unlbl, _ = self.model_1(
@@ -266,7 +268,7 @@ class LitSSLModel(LitPairedTextModel):
         all_means = torch.cat(self.train_means, dim=0)
         all_vars = torch.cat(self.train_vars, dim=0)
 
-        self.global_mean = all_means.mean()
+        # self.global_mean = all_means.mean()
 
         # epistemic uncertainty + aleatoric uncertainty
         self.global_var = all_means.var(unbiased=False) + all_vars.mean()
@@ -363,7 +365,7 @@ class SSLModelController(PairedTextModelController):
     def __init__(
             self,
             unlbl_data_files: list[str],
-            lambda_2: float,
+            lambda_0: float,
             lambda_3: float,
             lbl_split: float,
             *args, **kwargs
@@ -372,7 +374,7 @@ class SSLModelController(PairedTextModelController):
         super().__init__(*args, **kwargs)
 
         self.unlbl_data_files = unlbl_data_files
-        self.lambda_2 = lambda_2
+        self.lambda_0 = lambda_0
         self.lambda_3 = lambda_3
         self.lbl_split = lbl_split
 
@@ -429,10 +431,12 @@ class SSLModelController(PairedTextModelController):
                     log_dir=curr_log_dir,
                     save_uc_metrics=self.save_uc_metrics,
                     error_decay_factor=self.error_decay_factor,
+                    lambda_0=self.lambda_0,
                     lambda_1=self.lambda_1,
-                    approach=self.approach,
                     lambda_2=self.lambda_2,
-                    lambda_3=self.lambda_3
+                    lambda_3=self.lambda_3,
+                    approach=self.approach,
+                    sep_token_id=self.dm.tokeniser.sep_token_id
                 )
             
             trainer.fit(
