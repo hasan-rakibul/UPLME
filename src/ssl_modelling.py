@@ -79,18 +79,18 @@ class LitSSLModel(LitPairedTextModel):
         nll_2 = beta_nll_loss(mean_2, avg_var, labels)
         nll = self.lambda_0 * 0.5 * (nll_1 + nll_2)
         
-        loss_dict[f"{prefix}_nll"] = nll
+        loss_dict[f"{prefix}_nll"] = nll.item()
         
         # var_consistency = self._compute_penalty_loss(mean, var, labels)
 
         if self.lambda_1 != 0:
             consistency = self.lambda_1 * self._compute_consistency_loss(mean_1, mean_2, var_1, var_2)
-            loss_dict[f"{prefix}_consistency"] = consistency
+            loss_dict[f"{prefix}_consistency"] = consistency.item()
         else:
             consistency = 0
         
         # repr_consistency = F.mse_loss(sentence_rep_1, sentence_rep_2)
-        # loss_dict[f"{prefix}_repr_consistency"] = repr_consistency
+        # loss_dict[f"{prefix}_repr_consistency"] = repr_consistency.item()
 
         loss_betn_texts_1 = self._compute_alignment_betn_texts(
             input_ids=input_ids_1,
@@ -103,12 +103,12 @@ class LitSSLModel(LitPairedTextModel):
             labels=labels
         )
         loss_betn_texts = 0.5 * (loss_betn_texts_1 + loss_betn_texts_2)
-        loss_dict[f"{prefix}_loss_betn_texts"] = loss_betn_texts
+        loss_dict[f"{prefix}_loss_betn_texts"] = loss_betn_texts.item()
         
         # loss = nll + consistency + repr_consistency + loss_betn_texts
         loss = nll + consistency + loss_betn_texts
 
-        loss_dict[f"{prefix}_loss"] = loss
+        loss_dict[f"{prefix}_loss"] = loss.item()
 
         return loss, loss_dict
 
@@ -163,10 +163,10 @@ class LitSSLModel(LitPairedTextModel):
 
         loss_dict = {
             # f"{prefix}_consistency": consistency,
-            f"{prefix}_pseudo_supervision": pseudo_supervision,
+            f"{prefix}_pseudo_supervision": pseudo_supervision.item(),
             # f"{prefix}_domain_gap": domain_gap,
-            f"{prefix}_repr_consistency": repr_consistency,
-            f"{prefix}_loss": loss
+            f"{prefix}_repr_consistency": repr_consistency.item(),
+            f"{prefix}_loss": loss.item()
         }
 
         return loss, loss_dict
@@ -250,7 +250,7 @@ class LitSSLModel(LitPairedTextModel):
 
             loss_dict.update(loss_dict_unlbl)
 
-        loss_dict["train_total_loss"] = total_loss
+        loss_dict["train_total_loss"] = total_loss.item()
 
         self.log_dict(
             loss_dict, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True,
@@ -311,7 +311,7 @@ class LitSSLModel(LitPairedTextModel):
         )
         
         self.log_dict(
-            loss_dict, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True,
+            loss_dict, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True,
             batch_size=batch["labels"].shape[0]
         )
 
@@ -461,11 +461,11 @@ class SSLModelController(PairedTextModelController):
             trainer.logger.experiment.finish()
 
         # experimental - stop the trainer
-        if trainer.is_global_zero:
-            del trainer
-            torch.cuda.empty_cache()
-            if torch.distributed.is_initialized():
-                torch.distributed.destroy_process_group()
+        # if trainer.is_global_zero:
+            # del trainer
+            # torch.cuda.empty_cache()
+            # if torch.distributed.is_initialized():
+            #     torch.distributed.destroy_process_group()
 
         return best_model_ckpt, metrics
 

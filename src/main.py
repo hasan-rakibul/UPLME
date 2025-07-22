@@ -3,6 +3,7 @@ import shutil
 import logging
 import warnings
 import transformers
+import glob
 
 import hydra
 from omegaconf import DictConfig
@@ -19,7 +20,7 @@ import torch
 # as opposed to highest precision (default) for faster computation 
 torch.set_float32_matmul_precision('high')
 
-@hydra.main(config_path="../config", config_name="config", version_base="1.3")
+@hydra.main(config_path="../config", config_name="defaults", version_base="1.3")
 def main(cfg: DictConfig):
     transformers.logging.set_verbosity_error()
     logger.info(f"Experiment name: {cfg.expt}")
@@ -38,7 +39,7 @@ def main(cfg: DictConfig):
     n_trials = cfg.n_trials
     error_decay_factor = cfg.expt.error_decay_factor
     do_tune = cfg.do_tune
-    do_train = cfg.do_train
+    do_train = cfg.expt.do_train
     overwrite_parent_dir = cfg.expt.overwrite_parent_dir
     approach = cfg.expt.approach
     main_data = cfg.main_data
@@ -92,7 +93,7 @@ def main(cfg: DictConfig):
         log_info(logger, f"Using overwrite_logging_dir {overwrite_parent_dir}")
         assert os.path.isdir(overwrite_parent_dir), f"{overwrite_parent_dir} is not a directory \
             Note it must be a **parent** diretory like outputs/yyyy-mm-dd/hh-mm-ss_xx."
-        log_info(logger, "MAKE SURE you DELETE the last directory manually which was not trained for all epochs.")
+        log_info(logger, "If you are resuming training, MAKE SURE you manually DELETE any last directory, for which training was partially completed.")
         current_run_log_dir = parent_log_dir
         parent_log_dir = os.path.normpath(overwrite_parent_dir) # normpath to remove trailing slashes if any
         expt_name = os.path.basename(parent_log_dir)
@@ -125,7 +126,7 @@ def main(cfg: DictConfig):
             debug=debug,
             do_tune=do_tune,
             do_train=do_train,
-            do_test=cfg.do_test,
+            do_test=cfg.expt.do_test,
             error_decay_factor=error_decay_factor,
             lambda_0=cfg.expt.lambda_0,
             lambda_1=cfg.expt.lambda_1,
@@ -153,7 +154,7 @@ def main(cfg: DictConfig):
             debug=debug,
             do_tune=do_tune,
             do_train=do_train,
-            do_test=cfg.do_test,
+            do_test=cfg.expt.do_test,
             error_decay_factor=error_decay_factor,
             lambda_1=cfg.expt.lambda_1,
             lambda_2=cfg.expt.lambda_2,
@@ -171,7 +172,8 @@ def main(cfg: DictConfig):
 
     # clean-up
     if overwrite_parent_dir is not None:
-        shutil.move(os.path.join(current_run_log_dir, f"{expt_name}.log"), os.path.join(parent_log_dir, "new-run.log"))
+        new_log_file = glob.glob(os.path.join(current_run_log_dir, "*.log"))[0]
+        shutil.move(new_log_file, os.path.join(parent_log_dir, "new-run.log"))
         if cfg.do_tune:
             # maybe there are other files to move
             pass

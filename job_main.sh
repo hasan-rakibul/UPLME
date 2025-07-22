@@ -2,7 +2,7 @@
  
 #SBATCH --job-name=PairedText
 #SBATCH --output=outputs/log_slurm/%j_%x.log
-#SBATCH --time=8:00:00
+#SBATCH --time=2:00:00
 #SBATCH --nodes=1
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
@@ -10,8 +10,13 @@
 
 module load pytorch/2.2.0-rocm5.7.3
 
+# EXPT="ssl"
+EXPT="test_ssl"
+# EXPT="cross-basic-betn-text"
+# EXPT="test_cross-basic-betn-text"
+
 singularity exec $SINGULARITY_CONTAINER bash -c "\
 source $MYSOFTWARE/.venv/bin/activate && \
 export TOKENIZERS_PARALLELISM=false && \
 python src/main.py \
-expt=ssl"
+expt=$EXPT"

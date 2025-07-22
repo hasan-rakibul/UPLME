@@ -340,12 +340,12 @@ class LitPairedTextModel(L.LightningModule):
         if var is None:
             # Basic model with MSE loss
             total_loss = F.mse_loss(mean, labels.squeeze())
-            loss_dict[f"{prefix}_mse_loss"] = total_loss
+            loss_dict[f"{prefix}_mse_loss"] = total_loss.item()
         else:
             nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
-            loss_dict[f"{prefix}_nll_loss"] = nll_loss
+            loss_dict[f"{prefix}_nll_loss"] = nll_loss.item()
             penalty_loss = self._compute_penalty_loss(mean=mean, var=var, labels=labels)
-            loss_dict[f"{prefix}_penalty_loss"] = penalty_loss
+            loss_dict[f"{prefix}_penalty_loss"] = penalty_loss.item()
             total_loss = nll_loss + penalty_loss
 
         if self.lambda_2 != 0:
@@ -355,10 +355,10 @@ class LitPairedTextModel(L.LightningModule):
                 hidden_state=hidden_state,
                 labels=labels
             )
-            loss_dict[f"{prefix}_alignment_loss"] = alignment_loss         
+            loss_dict[f"{prefix}_alignment_loss"] = alignment_loss.item()         
 
             total_loss += alignment_loss
-            loss_dict[f"{prefix}_total_loss"] = total_loss
+            loss_dict[f"{prefix}_total_loss"] = total_loss.item()
 
         return total_loss, loss_dict
     
@@ -415,8 +415,8 @@ class LitPairedTextModel(L.LightningModule):
         _, loss_dict = self._compute_loss(mean=mean, var=var, labels=labels, prefix="val")
         self.log_dict(
             loss_dict,
-            on_step=True,
-            on_epoch=False,
+            on_step=False,
+            on_epoch=True,
             logger=True,
             prog_bar=False,
             sync_dist=True,
@@ -432,10 +432,10 @@ class LitPairedTextModel(L.LightningModule):
         rmse = mean_squared_error(mean, label, squared=False).to(self.device)
 
         metrics_dict = {
-            f"{mode}_pcc": pcc,
-            f"{mode}_ccc": ccc,
-            f"{mode}_scc": scc,
-            f"{mode}_rmse": rmse
+            f"{mode}_pcc": pcc.item(),
+            f"{mode}_ccc": ccc.item(),
+            f"{mode}_scc": scc.item(),
+            f"{mode}_rmse": rmse.item()
         }
 
         if var is not None:
@@ -461,10 +461,10 @@ class LitPairedTextModel(L.LightningModule):
         if all_vars is not None:
             all_vars = all_vars.to(torch.float64).cpu()
 
-        log_dict = self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val")
+        metric_dict = self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val")
 
         self.log_dict(
-            log_dict,
+            metric_dict,
             on_step=False, # must be False
             on_epoch=True, # must be True
             logger=True,
@@ -688,7 +688,7 @@ class PairedTextModelController(object):
             default_root_dir=curr_log_dir,
             deterministic=True,
             logger=wandb_logger,
-            log_every_n_steps=10,
+            log_every_n_steps=50, # frequent logging will require more memory; watch video at https://lightning.ai/docs/pytorch/stable/common/trainer.html#log-every-n-steps
             callbacks=callbacks,
             devices="auto",
             enable_checkpointing=self.enable_checkpointing,

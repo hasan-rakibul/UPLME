@@ -6,3 +6,6 @@ approach: cross-basic
 is_ssl: False
 
 lambda_2: 0 # alignment loss
+
+#### Resume training
+# overwrite_parent_dir: 

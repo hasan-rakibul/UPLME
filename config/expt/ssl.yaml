@@ -3,6 +3,9 @@ hydra:
     name: "lambda0-${expt.lambda_0}_lambda1-${expt.lambda_1}_lambda2-${expt.lambda_2}_lambda3-${expt.lambda_3}"
 
 lambda_0: 1 # lbl - nll
-lambda_1: 1 # lbl - wasserstein consistency
-lambda_2: 1 # unlbl - pseudo-supervision with nll and var mse
-lambda_3: 1 # unlbl - repr consistency loss
+lambda_1: 0 # lbl - wasserstein consistency
+lambda_2: 0 # unlbl - pseudo-supervision with nll and var mse
+lambda_3: 0 # unlbl - repr consistency loss
+
+#### Resume training
+# overwrite_parent_dir: 
