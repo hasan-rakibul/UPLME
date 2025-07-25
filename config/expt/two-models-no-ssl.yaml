@@ -1,8 +1,11 @@
 hydra:
   job:
-    name: "lambda1-${expt.lambda_1}"
+    name: "labdas-${expt.lambdas}_tune"
 
-lambda_2: 0
-lambda_3: 0
+lambdas: [1, 0, 0, 0, 0]
+# [nll, penalty, consistency, repr_consistency, alignment]
 
 lbl_split: 1
+num_passes: 1
+
+overwrite_parent_dir: null

@@ -1,9 +1,9 @@
 hydra:
   job:
-    name: "lambda2-${expt.lambda_2}"
+    name: "lambda2-${expt.lambda_2}_no-sanitise-labels"
 
 approach: cross-basic
-is_ssl: False
+is_two_models: False
 
 lambda_2: 0 # alignment loss
 

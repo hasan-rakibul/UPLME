@@ -4,7 +4,7 @@ hydra:
     name: "single-cross-prob-tune-${n_trials}"
 
 approach: cross-prob
-is_ssl: False
+is_two_models: False
 
 lambda_1: 1.0 # penalty
 error_decay_factor: 1.0 # if lambda_1 != 0

@@ -3,7 +3,7 @@ hydra:
     name: "" # doesn't matter as we save it in the parent dir
 
 approach: cross-basic
-is_ssl: False
+is_two_models: False
 
 do_train: False
 do_test: True

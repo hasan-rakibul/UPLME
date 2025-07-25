@@ -11,13 +11,13 @@ from omegaconf import DictConfig
 from utils import retrieve_newsemp_file_names, log_info
 
 from paired_texts_modelling import PairedTextModelController
-from ssl_modelling import SSLModelController
+from ssl_modelling import TwoModelsController
 
 logger = logging.getLogger(__name__)
 
 import torch
 # MI250X GPU has Tensor core, so recommeded to use high or medium precision
-# as opposed to highest precision (default) for faster computation 
+# as opposed to highest precision (default) for faster computation
 torch.set_float32_matmul_precision('high')
 
 @hydra.main(config_path="../config", config_name="defaults", version_base="1.3")
@@ -44,7 +44,7 @@ def main(cfg: DictConfig):
     approach = cfg.expt.approach
     main_data = cfg.main_data
 
-    is_ssl = cfg.expt.is_ssl
+    is_two_models = cfg.expt.is_two_models
 
     # other plm options: cardiffnlp/twitter-roberta-base-sentiment-latest, siebert/sentiment-roberta-large-english
     if approach == "cross-basic":
@@ -55,7 +55,7 @@ def main(cfg: DictConfig):
     elif approach == "bi-prob":
         plm_names = ["roberta-base", "roberta-base"]
     elif approach == "cross-prob":
-        if is_ssl:
+        if is_two_models:
             # self.plm_names = ["cross-encoder/stsb-roberta-base"]
             # self.plm_names = ["roberta-base", "answerdotai/ModernBERT-base"]
             # self.plm_names = ["answerdotai/ModernBERT-base", "answerdotai/ModernBERT-base"]
@@ -110,8 +110,9 @@ def main(cfg: DictConfig):
         cfg.val_check_interval = 5
         n_trials = 2
 
-    if is_ssl:
-        modelling = SSLModelController(
+    if is_two_models:
+        modelling = TwoModelsController(
+            num_passes=cfg.expt.num_passes,
             labelled_train_files=labelled_train_files,
             val_files=val_files,
             test_files=test_files,
@@ -128,13 +129,12 @@ def main(cfg: DictConfig):
             do_train=do_train,
             do_test=cfg.expt.do_test,
             error_decay_factor=error_decay_factor,
-            lambda_0=cfg.expt.lambda_0,
+            lambdas=cfg.expt.lambdas,
             lambda_1=cfg.expt.lambda_1,
             lambda_2=cfg.expt.lambda_2,
-            lambda_3=cfg.expt.lambda_3,
             approach=approach,
             main_data=main_data,
-            unlbl_data_files=unlbl_data_files,
+            # unlbl_data_files=unlbl_data_files,
             lbl_split=cfg.expt.lbl_split,
             plm_names=plm_names
         )

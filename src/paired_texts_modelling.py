@@ -191,7 +191,8 @@ class LitPairedTextModel(L.LightningModule):
         log_dir: str,
         save_uc_metrics: bool,
         error_decay_factor: float,
-        lambda_1: float,
+        lambdas: list[float],
+        lambda_1: float, #FIXME: not used, kept here for compatibility with paired modelling
         lambda_2: float,
         approach: str,
         sep_token_id: int # required for alignment loss
@@ -216,6 +217,7 @@ class LitPairedTextModel(L.LightningModule):
         self.save_uc_metrics = save_uc_metrics
 
         self.error_decay_factor = error_decay_factor
+        self.lambdas = lambdas
         self.lambda_1 = lambda_1
         self.lambda_2 = lambda_2
         self.sep_token_id = sep_token_id
@@ -278,7 +280,7 @@ class LitPairedTextModel(L.LightningModule):
         else:
             raise ValueError(f"Invalid penalty type: {self.penalty_type}")
 
-        return self.lambda_1 * penalty_loss
+        return penalty_loss
     
     def _compute_alignment_betn_texts(self, input_ids: Tensor, hidden_state: Tensor, labels: Tensor) -> Tensor:
         # input_ids: (bsz, seq_len)
@@ -344,7 +346,7 @@ class LitPairedTextModel(L.LightningModule):
         else:
             nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
             loss_dict[f"{prefix}_nll_loss"] = nll_loss.item()
-            penalty_loss = self._compute_penalty_loss(mean=mean, var=var, labels=labels)
+            penalty_loss = self.lambda_1 * self._compute_penalty_loss(mean=mean, var=var, labels=labels)
             loss_dict[f"{prefix}_penalty_loss"] = penalty_loss.item()
             total_loss = nll_loss + penalty_loss
 
@@ -566,6 +568,7 @@ class PairedTextModelController(object):
         do_train: bool = True,
         do_test: bool = False,
         error_decay_factor: float = 0.5,
+        lambdas: list[float] = [1.0],
         lambda_1: float = 0.0,
         lambda_2: float = 0.0,
         approach: str = "cross-prob",
@@ -591,6 +594,7 @@ class PairedTextModelController(object):
         self.do_train = do_train
         self.do_test = do_test
         self.error_decay_factor = error_decay_factor
+        self.lambdas = lambdas
         self.lambda_1 = lambda_1
         self.lambda_2 = lambda_2
         self.approach = approach
@@ -705,7 +709,7 @@ class PairedTextModelController(object):
         train_dl = self.dm.get_train_dl(
             data_path_list=self.train_file,
             batch_size=self.train_bsz,
-            sanitise_newsemp_labels=True,
+            sanitise_newsemp_labels=False,
             add_noise=False,
             seed=seed,
             is_newsemp=self.is_newsemp_main,
@@ -786,7 +790,7 @@ class PairedTextModelController(object):
             log_info(logger, f"Current seed: {seed}")
 
             # releasing the memory if allocated
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()
 
             curr_log_dir = os.path.join(parent_log_dir, f"seed_{seed}")
             if self.do_train:
