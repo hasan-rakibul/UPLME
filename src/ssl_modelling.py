@@ -20,7 +20,7 @@ from utils import log_info, beta_nll_loss
 logger = logging.getLogger(__name__)
 
 class LitTwoModels(LitPairedTextModel):
-    def __init__(self, num_passes: int, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         if self.approach == "cross-prob":
@@ -31,7 +31,6 @@ class LitTwoModels(LitPairedTextModel):
         
         # self.lambda_0 = lambda_0
         # self.lambda_3 = lambda_3
-        self.num_passes = num_passes
 
         # self.hparams.error_decay_factor = None # No penalty is added here yet
         # self.penalty_type = None
@@ -54,7 +53,7 @@ class LitTwoModels(LitPairedTextModel):
 
         return consistency
 
-    def _compute_loss_lbl(
+    def _compute_loss(
             self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor, 
             sentence_rep_1: Tensor, sentence_rep_2: Tensor,
             labels: Tensor, prefix: str,
@@ -76,8 +75,9 @@ class LitTwoModels(LitPairedTextModel):
         # nll_2 = F.gaussian_nll_loss(mean_2, labels.squeeze(), var_2)
         # nll = 0.5 * (nll_1 + nll_2)
 
+        avg_var = 0.5 * (var_1 + var_2)
+        
         if self.lambdas[0] != 0:
-            avg_var = 0.5 * (var_1 + var_2)
             nll_1 = beta_nll_loss(mean_1, avg_var, labels)
             nll_2 = beta_nll_loss(mean_2, avg_var, labels)
             nll = self.lambdas[0] * 0.5 * (nll_1 + nll_2)
@@ -90,6 +90,8 @@ class LitTwoModels(LitPairedTextModel):
             penalty_2 = self._compute_penalty_loss(mean_2, avg_var, labels)
             penalty = self.lambdas[1] * 0.5 * (penalty_1 + penalty_2)
             loss_dict[f"{prefix}_penalty"] = penalty.item()
+        else:
+            penalty = 0
 
         if self.lambdas[2] != 0:
             consistency = self.lambdas[2] * self._compute_consistency_loss(mean_1, mean_2, var_1, var_2)
@@ -205,24 +207,24 @@ class LitTwoModels(LitPairedTextModel):
             hidden_1s.append(hidden_state_1)
             hidden_2s.append(hidden_state_2)
             
-        mean_1_ensemble = torch.stack(mean_1s, dim=0).mean(dim=0) # (num_passes, bsz) -> (bsz)
-        mean_2_ensemble = torch.stack(mean_2s, dim=0).mean(dim=0)
-        var_1_ensemble = torch.stack(var_1s, dim=0).mean(dim=0)
-        var_2_ensemble = torch.stack(var_2s, dim=0).mean(dim=0)
-        hidden_1_ensemble = torch.stack(hidden_1s, dim=0).mean(dim=0)
-        hidden_2_ensemble = torch.stack(hidden_2s, dim=0).mean(dim=0)
-        sentence_rep_1_ensemble = torch.stack(sentence_rep_1s, dim=0).mean(dim=0)
-        sentence_rep_2_ensemble = torch.stack(sentence_rep_2s, dim=0).mean(dim=0)
+        mean_1 = torch.stack(mean_1s, dim=0).mean(dim=0) # (num_passes, bsz) -> (bsz)
+        mean_2 = torch.stack(mean_2s, dim=0).mean(dim=0)
+        var_1 = torch.stack(var_1s, dim=0).mean(dim=0)
+        var_2 = torch.stack(var_2s, dim=0).mean(dim=0)
+        sentence_rep_1 = torch.stack(sentence_rep_1s, dim=0).mean(dim=0)
+        sentence_rep_2 = torch.stack(sentence_rep_2s, dim=0).mean(dim=0)
+        hidden_state_1 = torch.stack(hidden_1s, dim=0).mean(dim=0)
+        hidden_state_2 = torch.stack(hidden_2s, dim=0).mean(dim=0)
 
-        total_loss, loss_dict = self._compute_loss_lbl(
-            mean_1=mean_1_ensemble, mean_2=mean_2_ensemble, 
-            var_1=var_1_ensemble, var_2=var_2_ensemble, 
-            sentence_rep_1=sentence_rep_1_ensemble, sentence_rep_2=sentence_rep_2_ensemble,
+        total_loss, loss_dict = self._compute_loss(
+            mean_1=mean_1, mean_2=mean_2, 
+            var_1=var_1, var_2=var_2, 
+            sentence_rep_1=sentence_rep_1, sentence_rep_2=sentence_rep_2,
             labels=batch["labels"], prefix="train_lbl",
             input_ids_1=batch["input_ids_1"],
             input_ids_2=batch["input_ids_2"],
-            hidden_state_1=hidden_1_ensemble,
-            hidden_state_2=hidden_2_ensemble
+            hidden_state_1=hidden_state_1,
+            hidden_state_2=hidden_state_2
         )
 
         self.log_dict(
@@ -414,24 +416,24 @@ class LitTwoModels(LitPairedTextModel):
             sentence_rep_1s.append(sentence_rep_1)
             sentence_rep_2s.append(sentence_rep_2)
 
-        mean_1_ensemble = torch.stack(mean_1s, dim=0).mean(dim=0) # (bsz)
-        mean_2_ensemble = torch.stack(mean_2s, dim=0).mean(dim=0)
-        var_1_ensemble = torch.stack(var_1s, dim=0).mean(dim=0)
-        var_2_ensemble = torch.stack(var_2s, dim=0).mean(dim=0)
-        hidden_1_ensemble = torch.stack(hidden_1s, dim=0).mean(dim=0)
-        hidden_2_ensemble = torch.stack(hidden_2s, dim=0).mean(dim=0)
-        sentence_rep_1_ensemble = torch.stack(sentence_rep_1s, dim=0).mean(dim=0)
-        sentence_rep_2_ensemble = torch.stack(sentence_rep_2s, dim=0).mean(dim=0)
+        mean_1 = torch.stack(mean_1s, dim=0).mean(dim=0) # (bsz)
+        mean_2 = torch.stack(mean_2s, dim=0).mean(dim=0)
+        var_1 = torch.stack(var_1s, dim=0).mean(dim=0)
+        var_2 = torch.stack(var_2s, dim=0).mean(dim=0)
+        sentence_rep_1 = torch.stack(sentence_rep_1s, dim=0).mean(dim=0)
+        sentence_rep_2 = torch.stack(sentence_rep_2s, dim=0).mean(dim=0)
+        hidden_state_1 = torch.stack(hidden_1s, dim=0).mean(dim=0)
+        hidden_state_2 = torch.stack(hidden_2s, dim=0).mean(dim=0)
 
-        _, loss_dict = self._compute_loss_lbl(
-            mean_1=mean_1_ensemble, mean_2=mean_2_ensemble,
-            var_1=var_1_ensemble, var_2=var_2_ensemble,
-            sentence_rep_1=sentence_rep_1_ensemble, sentence_rep_2=sentence_rep_2_ensemble,
+        _, loss_dict = self._compute_loss(
+            mean_1=mean_1, mean_2=mean_2,
+            var_1=var_1, var_2=var_2,
+            sentence_rep_1=sentence_rep_1, sentence_rep_2=sentence_rep_2,
             labels=batch["labels"], prefix="val",
             input_ids_1=batch["input_ids_1"],
             input_ids_2=batch["input_ids_2"],
-            hidden_state_1=hidden_1_ensemble,
-            hidden_state_2=hidden_2_ensemble
+            hidden_state_1=hidden_state_1,
+            hidden_state_2=hidden_state_2
         )
         
         self.log_dict(
@@ -439,8 +441,8 @@ class LitTwoModels(LitPairedTextModel):
             batch_size=batch["labels"].shape[0]
         )
 
-        mean = 0.5 * (mean_1_ensemble + mean_2_ensemble)
-        var = 0.5 * (var_1_ensemble + var_2_ensemble)
+        mean = 0.5 * (mean_1 + mean_2)
+        var = 0.5 * (var_1 + var_2)
 
         self.validation_outputs.append({
             "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
@@ -470,13 +472,13 @@ class LitTwoModels(LitPairedTextModel):
             var_1s.append(var_1)
             var_2s.append(var_2)
 
-        mean_1_ensemble = torch.stack(mean_1s, dim=0).mean(dim=0) # (bsz)
-        mean_2_ensemble = torch.stack(mean_2s, dim=0).mean(dim=0)
-        var_1_ensemble = torch.stack(var_1s, dim=0).mean(dim=0)
-        var_2_ensemble = torch.stack(var_2s, dim=0).mean(dim=0)
+        mean_1 = torch.stack(mean_1s, dim=0).mean(dim=0) # (bsz)
+        mean_2 = torch.stack(mean_2s, dim=0).mean(dim=0)
+        var_1 = torch.stack(var_1s, dim=0).mean(dim=0)
+        var_2 = torch.stack(var_2s, dim=0).mean(dim=0)
 
-        mean = 0.5 * (mean_1_ensemble + mean_2_ensemble)
-        var = 0.5 * (var_1_ensemble + var_2_ensemble)
+        mean = 0.5 * (mean_1 + mean_2)
+        var = 0.5 * (var_1 + var_2)
 
         outputs = {
             "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
@@ -494,7 +496,6 @@ class TwoModelsController(PairedTextModelController):
             # unlbl_data_files: list[str],
             # lambda_0: float,
             # lambda_3: float,
-            num_passes: int,
             lbl_split: float,
             *args, **kwargs
         ):
@@ -504,7 +505,6 @@ class TwoModelsController(PairedTextModelController):
         # self.unlbl_data_files = unlbl_data_files
         # self.lambda_0 = lambda_0
         # self.lambda_3 = lambda_3
-        self.num_passes = num_passes
         self.lbl_split = lbl_split
 
     def _seed_wise_train_validate(self, seed: int, curr_log_dir: str, extra_callbacks: list | None = None) -> tuple[str, dict]:

@@ -17,11 +17,7 @@ expt:
   lbl_split: 1.0 # percent of data to be used for labelled training
   
   lambdas: [1]
-  # lambda_0: 1 # ssl: lbl - nll
-  lambda_1: 0 # cross-basic: penalty, ssl: consistency?
   error_decay_factor: 1.0 # only for cross-basic if lambda_1 != 0
-  lambda_2: 0 # cross-prob: alignment loss, ssl: ?
-  # lambda_3: 0 # only in ssl
   
   do_train: True
   do_test: True # automatically, not done if do_tune is True
@@ -48,7 +44,7 @@ seeds: [0, 42, 100]
 # If delta is null (i.e, None), then we don't filter any samples
 delta: null
 
-do_tune: True
+do_tune: False
 n_trials: 50
 
 ### if newsemp:

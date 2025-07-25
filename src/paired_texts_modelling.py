@@ -11,7 +11,6 @@ import logging
 import numpy as np
 import os
 import glob
-import warnings
 
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
@@ -23,7 +22,7 @@ import plotly # required for optuna.visualisation
 from functools import partial
 
 from preprocess import PairedTextDataModule
-from utils import log_info, plot_uncertainy, process_seedwise_metrics, DelayedStartEarlyStopping, log_debug 
+from utils import log_info, plot_uncertainy, process_seedwise_metrics, DelayedStartEarlyStopping, beta_nll_loss
 from util_uncertainty_metrics import calculate_unc_metrics
 
 logger = logging.getLogger(__name__)
@@ -179,7 +178,6 @@ class CrossEncoderBasicModel(torch.nn.Module):
 
         return (
             y_hat.squeeze(), 
-            None, # there's no variance being modelled, just return None for compatibility
             output.last_hidden_state
         )
     
@@ -192,10 +190,9 @@ class LitPairedTextModel(L.LightningModule):
         save_uc_metrics: bool,
         error_decay_factor: float,
         lambdas: list[float],
-        lambda_1: float, #FIXME: not used, kept here for compatibility with paired modelling
-        lambda_2: float,
         approach: str,
-        sep_token_id: int # required for alignment loss
+        sep_token_id: int, # required for alignment loss
+        num_passes: int
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -203,10 +200,10 @@ class LitPairedTextModel(L.LightningModule):
         self.approach = approach
         if self.approach == "cross-basic":
             self.model = CrossEncoderBasicModel(plm_name=plm_names[0])
-        elif self.approach == "siamese":
-            self.model = SiameseModel(plm_name=plm_names[0])
-        elif self.approach == "bi-prob":
-            self.model = BiEncoderProbModel(plm_names=plm_names)
+        # elif self.approach == "siamese":
+        #     self.model = SiameseModel(plm_name=plm_names[0])
+        # elif self.approach == "bi-prob":
+        #     self.model = BiEncoderProbModel(plm_names=plm_names)
         elif self.approach == "cross-prob":
             self.model = CrossEncoderProbModel(plm_name=plm_names[0])
         else:
@@ -217,11 +214,14 @@ class LitPairedTextModel(L.LightningModule):
         self.save_uc_metrics = save_uc_metrics
 
         self.error_decay_factor = error_decay_factor
+        
         self.lambdas = lambdas
-        self.lambda_1 = lambda_1
-        self.lambda_2 = lambda_2
-        self.sep_token_id = sep_token_id
+        if self.approach != "cross-basic":
+            assert len(self.lambdas) == 3, "Number of lambdas should be 3"
 
+        self.sep_token_id = sep_token_id
+        self.num_passes = num_passes
+        
         self.penalty_type = "exp-decay"
 
         self.validation_outputs = []
@@ -332,49 +332,75 @@ class LitPairedTextModel(L.LightningModule):
         assert labels.min() >= 1 and labels.max() <= 7, \
             f"Labels should be in [1, 7], got range [{labels.min()}, {labels.max()}]"
         labels = (labels.float() - 4.0) / 3.0 # 1 is -1, 4 is 0, 7 is 1; like cos_sim
-        loss = self.lambda_2 * F.mse_loss(cos_sim, labels)
+        loss = F.mse_loss(cos_sim, labels)
         return loss
     
-    def _compute_loss(self, mean: Tensor, var: Tensor | None, labels: Tensor, prefix: str,
-                      input_ids: Tensor | None = None, hidden_state: Tensor | None = None) -> tuple[Tensor, dict]:
+    def _compute_loss(self, mean: Tensor, var: Tensor, labels: Tensor, prefix: str,
+                      input_ids: Tensor, hidden_state: Tensor) -> tuple[Tensor, dict]:
         loss_dict = {}
         
-        if var is None:
+        if self.approach == "cross-basic":
             # Basic model with MSE loss
             total_loss = F.mse_loss(mean, labels.squeeze())
-            loss_dict[f"{prefix}_mse_loss"] = total_loss.item()
+            loss_dict[f"{prefix}_mse"] = total_loss.item()
         else:
-            nll_loss = F.gaussian_nll_loss(mean, labels.squeeze(), var)
-            loss_dict[f"{prefix}_nll_loss"] = nll_loss.item()
-            penalty_loss = self.lambda_1 * self._compute_penalty_loss(mean=mean, var=var, labels=labels)
-            loss_dict[f"{prefix}_penalty_loss"] = penalty_loss.item()
+            total_loss = 0 # initiliasing to be safe, required when both lambdas are 0
+            if self.lambdas[0] != 0:
+                nll_loss = self.lambdas[0] * beta_nll_loss(mean, var, labels.squeeze())
+                loss_dict[f"{prefix}_nll"] = nll_loss.item()
+            else:
+                nll_loss = 0
+
+            if self.lambdas[1] != 0:
+                penalty_loss = self.lambdas[1] * self._compute_penalty_loss(mean=mean, var=var, labels=labels)
+                loss_dict[f"{prefix}_penalty"] = penalty_loss.item()
+            else:
+                penalty_loss = 0
+
             total_loss = nll_loss + penalty_loss
 
-        if self.lambda_2 != 0:
+        if self.lambdas[2] != 0:
             assert hidden_state is not None, "Hidden state is required for alignment loss"
-            alignment_loss = self._compute_alignment_betn_texts(
+            alignment_loss = self.lambdas[2] * self._compute_alignment_betn_texts(
                 input_ids=input_ids,
                 hidden_state=hidden_state,
                 labels=labels
             )
-            loss_dict[f"{prefix}_alignment_loss"] = alignment_loss.item()         
+            loss_dict[f"{prefix}_alignment"] = alignment_loss.item()
 
             total_loss += alignment_loss
-            loss_dict[f"{prefix}_total_loss"] = total_loss.item()
+            loss_dict[f"{prefix}_loss"] = total_loss.item()
 
         return total_loss, loss_dict
+
+    def _forward_pass(self, batch: dict) -> tuple[Tensor, Tensor, Tensor]:
+        means, varss, hidden_states = [], [], []
+
+        for _ in range(self.num_passes):
+            if self.approach == "cross-prob":
+                mean, var, _, hidden_state = self.model(
+                    input_ids=batch['input_ids'],
+                    attention_mask=batch['attention_mask']
+                )
+            elif self.approach == "cross-basic":
+                mean, hidden_state = self.model(batch)
+                var = torch.zeros_like(mean)
+            # else:
+            #     mean, var = self.model(batch)
+            #     hidden_state = None
+            
+            means.append(mean)
+            varss.append(var)
+            hidden_states.append(hidden_state)
+        
+        mean = torch.stack(means, dim=0).mean(dim=0)
+        var = torch.stack(varss, dim=0).mean(dim=0)
+        hidden_state = torch.stack(hidden_states, dim=0).mean(dim=0)
+
+        return mean, var, hidden_state
     
     def training_step(self, batch, batch_idx):
-        if self.approach == "cross-prob":
-            mean, var, _, hidden_state = self.model(
-                input_ids=batch['input_ids'],
-                attention_mask=batch['attention_mask']
-            )
-        elif self.approach == "cross-basic":
-            mean, var, hidden_state = self.model(batch)
-        else:
-            mean, var = self.model(batch)
-            hidden_state = None
+        mean, var, hidden_state = self._forward_pass(batch)
         
         loss, loss_dict = self._compute_loss(mean, var, batch["labels"], prefix="train",
                                              input_ids=batch['input_ids'],
@@ -390,23 +416,21 @@ class LitPairedTextModel(L.LightningModule):
         )
         return loss
     
-    def validation_step(self, batch, batch_idx):
-        if self.approach == "cross-prob":
-            mean, var, _, _ = self.model(
-                input_ids=batch['input_ids'],
-                attention_mask=batch['attention_mask']
-            )
-        elif self.approach == "cross-basic":
-            mean, var, _ = self.model(batch)
-        else:
-            mean, var = self.model(batch)
+    def _enable_dropout_at_inference(self):
+        for m in self.model.modules():
+            if isinstance(m, torch.nn.Dropout):
+                m.train()
 
-        if var is not None: # could be None for basic model
-            var = var.unsqueeze(0) if var.dim() == 0 else var
+    def validation_step(self, batch, batch_idx):
+        if self.num_passes > 1:
+            self._enable_dropout_at_inference()
+
+        mean, var, hidden_state = self._forward_pass(batch)
+
         # Note: it's important to check dim and unsqeeze as we get 0-dim if the last batch has only one sample
         # Otherwise, we get an error when concatenating tensors later
-        
         mean = mean.unsqueeze(0) if mean.dim() == 0 else mean
+        var = var.unsqueeze(0) if var.dim() == 0 else var
         labels = batch["labels"].unsqueeze(0) if batch["labels"].dim() == 0 else batch["labels"]
         self.validation_outputs.append({
             "mean": mean,
@@ -414,7 +438,10 @@ class LitPairedTextModel(L.LightningModule):
             "labels": labels
         })
 
-        _, loss_dict = self._compute_loss(mean=mean, var=var, labels=labels, prefix="val")
+        _, loss_dict = self._compute_loss(
+            mean=mean, var=var, labels=labels, prefix="val",
+            input_ids=batch['input_ids'], hidden_state=hidden_state
+        )
         self.log_dict(
             loss_dict,
             on_step=False,
@@ -440,7 +467,7 @@ class LitPairedTextModel(L.LightningModule):
             f"{mode}_rmse": rmse.item()
         }
 
-        if var is not None:
+        if self.approach != "cross-basic":
             # meaning that the model is probabilistic
             # In my understanding, it is fine to have unc_metrics in CPU as it's not used for any further computation
             unc_metrics = calculate_unc_metrics(mean=mean, var=var, label=label)
@@ -452,16 +479,11 @@ class LitPairedTextModel(L.LightningModule):
     def on_validation_epoch_end(self):
         all_means = torch.cat([out["mean"] for out in self.validation_outputs])
         all_labels = torch.cat([out["labels"] for out in self.validation_outputs])
-        
-        if self.validation_outputs[0]["var"] is None:
-            all_vars = None
-        else:
-            all_vars = torch.cat([out["var"] for out in self.validation_outputs])
+        all_vars = torch.cat([out["var"] for out in self.validation_outputs])
 
         all_means = all_means.to(torch.float64).cpu()
         all_labels = all_labels.to(torch.float64).cpu()
-        if all_vars is not None:
-            all_vars = all_vars.to(torch.float64).cpu()
+        all_vars = all_vars.to(torch.float64).cpu()
 
         metric_dict = self._calculate_metrics(mean=all_means, var=all_vars, label=all_labels, mode="val")
 
@@ -495,22 +517,14 @@ class LitPairedTextModel(L.LightningModule):
         plot_uncertainy(output_dict, f"{self.log_dir}/uncertainty.pdf")
 
     def test_step(self, batch, batch_idx):
-        if self.approach == "cross-prob":
-            mean, var, _, _ = self.model(
-                input_ids=batch['input_ids'],
-                attention_mask=batch['attention_mask']
-            )
-        elif self.approach == "cross-basic":
-            mean, var, _ = self.model(batch)
-        else:
-            mean, var = self.model(batch)
+        if self.num_passes > 1:
+            self._enable_dropout_at_inference()
 
-        if var is not None:
-            var = var.unsqueeze(0) if var.dim() == 0 else var
+        mean, var, _ = self._forward_pass(batch)
 
         outputs = {
             "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
-            "var": var
+            "var": var.unsqueeze(0) if var.dim() == 0 else var
         }
 
         if "labels" in batch:
@@ -525,11 +539,8 @@ class LitPairedTextModel(L.LightningModule):
         all_means = torch.cat([out["mean"] for out in self.test_outputs])
         all_means = all_means.to(torch.float64).cpu()
         
-        if self.test_outputs[0]["var"] is None:
-            all_vars = None
-        else:
-            all_vars = torch.cat([out["var"] for out in self.test_outputs])
-            all_vars = all_vars.to(torch.float64).cpu()
+        all_vars = torch.cat([out["var"] for out in self.test_outputs])
+        all_vars = all_vars.to(torch.float64).cpu()
 
         if "labels" in self.test_outputs[0]:
             all_labels = torch.cat([out["labels"] for out in self.test_outputs])
@@ -543,7 +554,7 @@ class LitPairedTextModel(L.LightningModule):
                 batch_size=self.test_outputs[0]["mean"].shape[0]
             )
 
-        if all_vars is not None:
+        if self.approach != "cross-basic":
             # meaning that the model is probabilistic
             self._save_and_plot_uncertainty(self.test_outputs)
 
@@ -569,12 +580,11 @@ class PairedTextModelController(object):
         do_test: bool = False,
         error_decay_factor: float = 0.5,
         lambdas: list[float] = [1.0],
-        lambda_1: float = 0.0,
-        lambda_2: float = 0.0,
         approach: str = "cross-prob",
         main_data: str = "newsemp",
         lbl_split: float = 1.0,
-        plm_names: list[str] = ["roberta-base"]
+        plm_names: list[str] = ["roberta-base"],
+        num_passes: int = 1
     ):
         self.train_file = labelled_train_files
         self.val_file = val_files
@@ -595,9 +605,8 @@ class PairedTextModelController(object):
         self.do_test = do_test
         self.error_decay_factor = error_decay_factor
         self.lambdas = lambdas
-        self.lambda_1 = lambda_1
-        self.lambda_2 = lambda_2
         self.approach = approach
+        self.num_passes = num_passes
 
         self.enable_early_stopping = True
         self.early_stopping_start_epoch = 5 # applicable for DelayedStartEarlyStopping
@@ -734,10 +743,10 @@ class PairedTextModelController(object):
                     log_dir=curr_log_dir,
                     save_uc_metrics=self.save_uc_metrics,
                     error_decay_factor=self.error_decay_factor,
-                    lambda_1=self.lambda_1,
-                    lambda_2=self.lambda_2,
+                    lambdas=self.lambdas,
                     approach=self.approach,
-                    sep_token_id=self.dm.tokeniser.sep_token_id
+                    sep_token_id=self.dm.tokeniser.sep_token_id,
+                    num_passes=self.num_passes
                 )
             
             trainer.fit(
@@ -820,9 +829,9 @@ class PairedTextModelController(object):
         # self.lr = trial.suggest_categorical("lr", [1e-5, 2e-5, 3e-5, 4e-5])
         # self.train_bsz = trial.suggest_int("train_bsz", 8, 32, step=8)
 
-        self.lambda_1 = trial.suggest_float("lambda_1", 0.0, 100.0)
+        # self.lambda_1 = trial.suggest_float("lambda_1", 0.0, 100.0)
         self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
-        self.lambda_2 = trial.suggest_float("lambda_2", 0.0, 100.0)
+        # self.lambda_2 = trial.suggest_float("lambda_2", 0.0, 100.0)
 
         pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_rmse")
         _, metrics = self._seed_wise_train_validate(

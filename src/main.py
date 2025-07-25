@@ -76,12 +76,12 @@ def main(cfg: DictConfig):
         labelled_train_files = newsemp_train_files
         val_files = newsemp_val_files
         test_files = newsemp_test_files
-        unlbl_data_files = empstories_train_files + empstories_val_files + empstories_test_files
+        # unlbl_data_files = empstories_train_files + empstories_val_files + empstories_test_files
     elif main_data == "empstories":
         labelled_train_files = empstories_train_files
         val_files = empstories_val_files
         test_files = empstories_test_files
-        unlbl_data_files = newsemp_train_files + newsemp_val_files + newsemp_test_files
+        # unlbl_data_files = newsemp_train_files + newsemp_val_files + newsemp_test_files
     else:
         raise ValueError("main_data should be either newsemp or empstories")
     log_info(logger, f"Train data: {labelled_train_files}\tVal data: {val_files}\tTest data: {test_files}")
@@ -130,8 +130,6 @@ def main(cfg: DictConfig):
             do_test=cfg.expt.do_test,
             error_decay_factor=error_decay_factor,
             lambdas=cfg.expt.lambdas,
-            lambda_1=cfg.expt.lambda_1,
-            lambda_2=cfg.expt.lambda_2,
             approach=approach,
             main_data=main_data,
             # unlbl_data_files=unlbl_data_files,
@@ -156,8 +154,7 @@ def main(cfg: DictConfig):
             do_train=do_train,
             do_test=cfg.expt.do_test,
             error_decay_factor=error_decay_factor,
-            lambda_1=cfg.expt.lambda_1,
-            lambda_2=cfg.expt.lambda_2,
+            lambdas=cfg.expt.lambdas,
             approach=approach,
             main_data=main_data,
             lbl_split=cfg.expt.lbl_split,

@@ -1,13 +1,11 @@
 hydra:
   job:
-    # name: "single-cross-prob-lambda1-${expt.lambda_1}-decay-${expt.error_decay_factor}-lambda2-${expt.lambda_2}"
-    name: "single-cross-prob-tune-${n_trials}"
+    name: "single-model_lambdas-${expt.lambdas}_${expt.num_passes}-passes"
 
-approach: cross-prob
 is_two_models: False
+num_passes: 4
 
-lambda_1: 1.0 # penalty
-error_decay_factor: 1.0 # if lambda_1 != 0
-lambda_2: 0.0 # alignment
+lambdas: [1, 0, 1]
+# [nll, penalty, alignment]
 
-overwrite_parent_dir: outputs/2025-06-05/00-29-41_single-cross-prob-tune-50
+overwrite_parent_dir: null
