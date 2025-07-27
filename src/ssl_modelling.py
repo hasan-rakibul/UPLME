@@ -1,6 +1,6 @@
 import os
 import logging
-import glob
+from pathlib import Path
 import torch
 from torch import Tensor
 import torch.nn.functional as F
@@ -29,15 +29,10 @@ class LitTwoModels(LitPairedTextModel):
         else:
             raise ValueError(f"Invalid or not-implemented approach: {self.approach}")
         
-        # self.lambda_0 = lambda_0
-        # self.lambda_3 = lambda_3
-
         # self.hparams.error_decay_factor = None # No penalty is added here yet
         # self.penalty_type = None
         # self.train_means = []
         # self.train_vars = []
-
-        assert len(self.lambdas) == 5, "lambdas must be a list of 5 elements"
 
     def _compute_consistency_loss(self, mean_1: Tensor, mean_2: Tensor, var_1: Tensor, var_2: Tensor) -> Tensor:
         # dist_1 = dist.Normal(mean_1, torch.sqrt(var_1))
@@ -494,8 +489,6 @@ class TwoModelsController(PairedTextModelController):
     def __init__(
             self,
             # unlbl_data_files: list[str],
-            # lambda_0: float,
-            # lambda_3: float,
             lbl_split: float,
             *args, **kwargs
         ):
@@ -503,8 +496,6 @@ class TwoModelsController(PairedTextModelController):
         super().__init__(*args, **kwargs)
 
         # self.unlbl_data_files = unlbl_data_files
-        # self.lambda_0 = lambda_0
-        # self.lambda_3 = lambda_3
         self.lbl_split = lbl_split
 
     def _seed_wise_train_validate(self, seed: int, curr_log_dir: str, extra_callbacks: list | None = None) -> tuple[str, dict]:
@@ -556,7 +547,7 @@ class TwoModelsController(PairedTextModelController):
         # https://lightning.ai/docs/pytorch/stable/advanced/model_init.html
         if os.path.exists(curr_log_dir) and not self.do_tune:
             log_info(logger, f"Seed-level logging directory already exists: {curr_log_dir}. So, validating on the saved ckpt...")
-            ckpt_list = glob.glob(os.path.join(curr_log_dir, "**/*.ckpt"), recursive=True)
+            ckpt_list = list(Path(curr_log_dir).rglob("*.ckpt"))
             assert len(ckpt_list) == 1, f"Number of ckpt is not 1."
             best_model_ckpt = ckpt_list[0]
         else:
@@ -571,10 +562,6 @@ class TwoModelsController(PairedTextModelController):
                     save_uc_metrics=self.save_uc_metrics,
                     error_decay_factor=self.error_decay_factor,
                     lambdas=self.lambdas,
-                    # lambda_0=self.lambda_0,
-                    lambda_1=self.lambda_1,
-                    lambda_2=self.lambda_2,
-                    # lambda_3=self.lambda_3,
                     approach=self.approach,
                     sep_token_id=self.dm.tokeniser.sep_token_id
                 )

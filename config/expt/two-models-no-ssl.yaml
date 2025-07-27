@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "labdas-${expt.lambdas}_${expt.num_passes}-passes"
+    name: "${expt.num_passes}-passes"
 
 lambdas: [1, 0, 0, 1, 0]
 # [nll, penalty, consistency, repr_consistency, alignment]

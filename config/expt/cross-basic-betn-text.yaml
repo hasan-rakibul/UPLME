@@ -1,11 +1,12 @@
 hydra:
   job:
-    name: "lambda2-${expt.lambda_2}_no-sanitise-labels"
+    name: ""
 
 approach: cross-basic
 is_two_models: False
 
-lambda_2: 0 # alignment loss
+lambdas: [null, null, 0]
+# [NA, NA, alignment]
 
 #### Resume training
 # overwrite_parent_dir: 

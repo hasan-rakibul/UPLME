@@ -3,7 +3,7 @@ import shutil
 import logging
 import warnings
 import transformers
-import glob
+from pathlib import Path
 
 import hydra
 from omegaconf import DictConfig
@@ -36,9 +36,9 @@ def main(cfg: DictConfig):
     train_bsz = cfg.train_bsz
     eval_bsz = cfg.eval_bsz
     delta = cfg.delta
-    n_trials = cfg.n_trials
+    n_trials = cfg.expt.n_trials
     error_decay_factor = cfg.expt.error_decay_factor
-    do_tune = cfg.do_tune
+    do_tune = cfg.expt.do_tune
     do_train = cfg.expt.do_train
     overwrite_parent_dir = cfg.expt.overwrite_parent_dir
     approach = cfg.expt.approach
@@ -111,6 +111,8 @@ def main(cfg: DictConfig):
         n_trials = 2
 
     if is_two_models:
+        if do_train:
+            assert len(cfg.expt.lambdas) == 5, "lambdas must be a list of 5 elements"
         modelling = TwoModelsController(
             num_passes=cfg.expt.num_passes,
             labelled_train_files=labelled_train_files,
@@ -134,9 +136,14 @@ def main(cfg: DictConfig):
             main_data=main_data,
             # unlbl_data_files=unlbl_data_files,
             lbl_split=cfg.expt.lbl_split,
-            plm_names=plm_names
+            plm_names=plm_names,
+            add_noise_train=cfg.expt.add_noise_train,
+            add_noise_test=cfg.expt.add_noise_test
         )
     else:
+        if approach != "cross-basic" and do_train:
+            assert len(cfg.expt.lambdas) == 3, "Number of lambdas must be 3 for cross-prob" 
+        
         modelling = PairedTextModelController(
             labelled_train_files=labelled_train_files,
             val_files=val_files,
@@ -158,7 +165,9 @@ def main(cfg: DictConfig):
             approach=approach,
             main_data=main_data,
             lbl_split=cfg.expt.lbl_split,
-            plm_names=plm_names
+            plm_names=plm_names,
+            add_noise_train=cfg.expt.add_noise_train,
+            add_noise_test=cfg.expt.add_noise_test
         )
 
     modelling.tune_train_test(
@@ -169,9 +178,9 @@ def main(cfg: DictConfig):
 
     # clean-up
     if overwrite_parent_dir is not None:
-        new_log_file = glob.glob(os.path.join(current_run_log_dir, "*.log"))[0]
+        new_log_file = list(Path(current_run_log_dir).glob("*.log"))[0]
         shutil.move(new_log_file, os.path.join(parent_log_dir, "new-run.log"))
-        if cfg.do_tune:
+        if do_tune:
             # maybe there are other files to move
             pass
         else:

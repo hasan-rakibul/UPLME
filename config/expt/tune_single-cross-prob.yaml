@@ -1,0 +1,17 @@
+hydra:
+  job:
+    name: "single-model_${expt.num_passes}-passes"
+
+# FIXED
+is_two_models: False
+
+# Can change
+num_passes: 4
+
+lambdas: [1, 1, 1]
+# [nll, penalty, alignment]
+
+do_tune: True
+n_trials: 1
+
+overwrite_parent_dir: outputs/2025-07-26/02-07-35_newsemp_cross-prob_split-1.0_tune-True_single-model_lambdas-[1, 1, 1]_4-passes

@@ -1,0 +1,16 @@
+hydra:
+  job:
+    name: ""
+
+# FIXED
+is_two_models: False
+
+# Can change
+num_passes: 4
+
+add_noise_test: True
+
+do_train: False
+do_test: True
+
+overwrite_parent_dir: outputs/2025-07-26/01-19-12_newsemp_cross-prob_split-1.0_single-model_lambdas-[1, 1, 0]_4-passes

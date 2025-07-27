@@ -1,3 +1,4 @@
+from operator import add
 import random
 import numpy as np
 import pandas as pd
@@ -392,7 +393,7 @@ class PairedTextDataModule:
                     all_data = newsemp_preprocessor.process_data(
                         data_paths=data_paths,
                         sanitise_labels=sanitise_newsemp_labels,
-                        add_noise=add_noise
+                        add_noise=add_noise # FIXME: when saved augmented data is loaded, I cannot change the sanitisation and add_noise
                     )
                 else:
                     # doesn't require much processing, so done here
@@ -441,7 +442,10 @@ class PairedTextDataModule:
                     inplace=True
                 )
         
-        all_data = all_data[["text_1", "text_2", "labels"]]
+        keep_col = ["text_1", "text_2", "labels"]
+        if add_noise:
+            keep_col.append("noise")
+        all_data = all_data[keep_col]
         log_info(logger, f"Total number of samples: {len(all_data)}\n")
 
         assert not all_data.isna().any().any(), "There are still NaN values in the data."

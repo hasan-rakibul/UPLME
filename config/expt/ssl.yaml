@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "ssl-lambdas-${expt.lambdas}"
+    name: "ssl"
 
 lambdas: []
 #### Resume training

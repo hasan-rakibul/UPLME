@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: ${main_data}_${expt.approach}_split-${expt.lbl_split}_${expt.hydra.job.name}
+    name: ${main_data}_${expt.approach}_lambdas-${expt.lambdas}_tune-${expt.do_tune}_${expt.hydra.job.name}
   run:
     dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra:job.name}
 
@@ -15,12 +15,16 @@ expt:
   approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
   is_two_models: True
   lbl_split: 1.0 # percent of data to be used for labelled training
+  add_noise_train: False
+  add_noise_test: False
   
-  lambdas: [1]
-  error_decay_factor: 1.0 # only for cross-basic if lambda_1 != 0
+  lambdas: [1, 0, 0, 0, 0]
+  error_decay_factor: 1.0
   
   do_train: True
   do_test: True # automatically, not done if do_tune is True
+  do_tune: False
+  n_trials: 50
 
 main_data: newsemp # options: newsemp, empstories
 
@@ -43,9 +47,6 @@ seeds: [0, 42, 100]
 # Only keep samples if the difference between 'empathy' and 'llm_empathy' < delta
 # If delta is null (i.e, None), then we don't filter any samples
 delta: null
-
-do_tune: False
-n_trials: 50
 
 ### if newsemp:
 # all files list that we can use for training / validation / testing

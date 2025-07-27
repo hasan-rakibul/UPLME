@@ -1,11 +1,16 @@
 hydra:
   job:
-    name: "single-model_lambdas-${expt.lambdas}_${expt.num_passes}-passes"
+    name: "single-model_${expt.num_passes}-passes"
 
+# FIXED
 is_two_models: False
+
+# Can change
 num_passes: 4
 
-lambdas: [1, 0, 1]
+lambdas: [1, 0, 0]
 # [nll, penalty, alignment]
+
+do_tune: False
 
 overwrite_parent_dir: null

@@ -10,7 +10,7 @@ from torchmetrics.functional import pearson_corrcoef, concordance_corrcoef, mean
 import logging
 import numpy as np
 import os
-import glob
+from pathlib import Path
 
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
@@ -216,9 +216,6 @@ class LitPairedTextModel(L.LightningModule):
         self.error_decay_factor = error_decay_factor
         
         self.lambdas = lambdas
-        if self.approach != "cross-basic":
-            assert len(self.lambdas) == 3, "Number of lambdas should be 3"
-
         self.sep_token_id = sep_token_id
         self.num_passes = num_passes
         
@@ -492,7 +489,7 @@ class LitPairedTextModel(L.LightningModule):
             on_step=False, # must be False
             on_epoch=True, # must be True
             logger=True,
-            prog_bar=True,
+            prog_bar=False,
             sync_dist=True,
             batch_size=self.validation_outputs[0]["mean"].shape[0]
         )
@@ -511,8 +508,11 @@ class LitPairedTextModel(L.LightningModule):
                     output_dict[key] = array
         
         # save for later use
-        np.save(f"{self.log_dir}/outputs.npy", output_dict)
-        log_info(logger, f"Saved output to {self.log_dir}/outpus.npy")
+        save_as = f"{self.log_dir}/outputs.npy"
+        if os.path.exists(save_as):
+            save_as = f"{self.log_dir}/outputs_new.npy"
+        np.save(save_as, output_dict)
+        log_info(logger, f"Saved output to {save_as}")
 
         plot_uncertainy(output_dict, f"{self.log_dir}/uncertainty.pdf")
 
@@ -584,7 +584,9 @@ class PairedTextModelController(object):
         main_data: str = "newsemp",
         lbl_split: float = 1.0,
         plm_names: list[str] = ["roberta-base"],
-        num_passes: int = 1
+        num_passes: int = 1,
+        add_noise_train: bool = False,
+        add_noise_test: bool = False
     ):
         self.train_file = labelled_train_files
         self.val_file = val_files
@@ -607,6 +609,7 @@ class PairedTextModelController(object):
         self.lambdas = lambdas
         self.approach = approach
         self.num_passes = num_passes
+        self.add_noise_train = add_noise_train
 
         self.enable_early_stopping = True
         self.early_stopping_start_epoch = 5 # applicable for DelayedStartEarlyStopping
@@ -638,7 +641,7 @@ class PairedTextModelController(object):
         if self.do_test:
             self.test_dl = self.dm.get_test_dl(
                 data_path_list=self.test_file, batch_size=self.eval_bsz, 
-                sanitise_newsemp_labels=False, add_noise=False,
+                sanitise_newsemp_labels=False, add_noise=add_noise_test,
                 is_newsemp=self.is_newsemp_main
             )
            
@@ -719,7 +722,7 @@ class PairedTextModelController(object):
             data_path_list=self.train_file,
             batch_size=self.train_bsz,
             sanitise_newsemp_labels=False,
-            add_noise=False,
+            add_noise=self.add_noise_train,
             seed=seed,
             is_newsemp=self.is_newsemp_main,
             lbl_split=self.lbl_split
@@ -730,7 +733,7 @@ class PairedTextModelController(object):
         # https://lightning.ai/docs/pytorch/stable/advanced/model_init.html
         if os.path.exists(curr_log_dir) and not self.do_tune:
             log_info(logger, f"Seed-level logging directory already exists: {curr_log_dir}. So, validating on the saved ckpt...")
-            ckpt_list = glob.glob(os.path.join(curr_log_dir, "**/*.ckpt"), recursive=True)
+            ckpt_list = list(Path(curr_log_dir).rglob("*.ckpt"))
             assert len(ckpt_list) == 1, f"Number of ckpt is not 1."
             best_model_ckpt = ckpt_list[0]
         else:
@@ -808,7 +811,7 @@ class PairedTextModelController(object):
                     curr_log_dir=curr_log_dir
                 )
             else:
-                best_model_ckpt = glob.glob(os.path.join(curr_log_dir, "**/*.ckpt"), recursive=True)
+                best_model_ckpt = list(Path(curr_log_dir).rglob("*.ckpt"))
                 assert len(best_model_ckpt) == 1, f"Found {len(best_model_ckpt)} ckpt files."
                 best_model_ckpt = best_model_ckpt[0]
                 metrics = {} # empty val metrics
@@ -829,11 +832,15 @@ class PairedTextModelController(object):
         # self.lr = trial.suggest_categorical("lr", [1e-5, 2e-5, 3e-5, 4e-5])
         # self.train_bsz = trial.suggest_int("train_bsz", 8, 32, step=8)
 
-        # self.lambda_1 = trial.suggest_float("lambda_1", 0.0, 100.0)
+        lambda_1 = trial.suggest_float("lambda_1", 0.0, 10.0)
+        lambda_2 = trial.suggest_float("lambda_2", 0.0, 10.0)
+        self.lambdas = [1.0, lambda_1, lambda_2]
+        
         self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
-        # self.lambda_2 = trial.suggest_float("lambda_2", 0.0, 100.0)
 
-        pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_rmse")
+        self.num_passes = trial.suggest_int("num_passes", 1, 4)
+
+        pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_ccc")
         _, metrics = self._seed_wise_train_validate(
             seed=optuna_seed,
             curr_log_dir=optuna_log_dir,
@@ -843,14 +850,14 @@ class PairedTextModelController(object):
         # releasing the memory - trying to solve that OOM issue with slurm job 
         torch.cuda.empty_cache()
 
-        return metrics["val_rmse"]
+        return metrics["val_ccc"]
 
     def tune_train_test(self, n_trials: int, parent_log_dir: str, seeds: list[int] = [0]) -> None:
         if self.do_tune:
             optuna_log_dir = os.path.join(parent_log_dir, "optuna_logs")
             os.makedirs(optuna_log_dir, exist_ok=True)
             study = optuna.create_study(
-                direction="minimize",
+                direction="maximize",
                 pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5),
                 study_name=self.expt_name,
                 storage=f"sqlite:///{optuna_log_dir}/optuna.db",
