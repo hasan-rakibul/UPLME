@@ -1,0 +1,14 @@
+hydra:
+  job:
+    name: "${expt.num_passes}-passes"
+
+lambdas: [null, null, null, null, null] # being tuned / set in optuna objective
+# [nll, penalty, consistency, repr_consistency, alignment]
+
+lbl_split: 1
+num_passes: 4
+
+do_tune: True
+n_trials: 20
+
+overwrite_parent_dir: outputs/2025-07-28/01-52-43_newsemp_cross-prob_lambdas-[None, None, None, None, None]_tune-True_4-passes

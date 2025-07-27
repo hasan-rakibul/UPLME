@@ -489,14 +489,12 @@ class TwoModelsController(PairedTextModelController):
     def __init__(
             self,
             # unlbl_data_files: list[str],
-            lbl_split: float,
             *args, **kwargs
         ):
         
         super().__init__(*args, **kwargs)
 
         # self.unlbl_data_files = unlbl_data_files
-        self.lbl_split = lbl_split
 
     def _seed_wise_train_validate(self, seed: int, curr_log_dir: str, extra_callbacks: list | None = None) -> tuple[str, dict]:
         L.seed_everything(seed)
@@ -508,7 +506,8 @@ class TwoModelsController(PairedTextModelController):
             add_noise=False,
             seed=seed,
             is_newsemp=self.is_newsemp_main,
-            lbl_split=self.lbl_split
+            lbl_split=self.lbl_split,
+            do_augment=self.do_augment
         )
         
         # In-domain SSL
@@ -616,14 +615,15 @@ class TwoModelsController(PairedTextModelController):
         # self.lr = trial.suggest_categorical("lr", [1e-5, 2e-5, 3e-5, 4e-5])
         # self.train_bsz = trial.suggest_int("train_bsz", 8, 32, step=8)
 
-        self.num_passes = trial.suggest_int("num_passes", 1, 4)
+        # self.num_passes = trial.suggest_int("num_passes", 1, 4)
         
-        lambda_0 = trial.suggest_float("lambda_0", 0.0, 10.0)
-        lambda_1 = trial.suggest_float("lambda_1", 0.0, 10.0)
-        lambda_2 = trial.suggest_float("lambda_2", 0.0, 10.0)
-        lambda_3 = trial.suggest_float("lambda_3", 0.0, 10.0)
-        lambda_4 = trial.suggest_float("lambda_4", 0.0, 10.0)
-        self.lambdas = [lambda_0, lambda_1, lambda_2, lambda_3, lambda_4]
+        lambda_1 = trial.suggest_float("lambda_1", 0.0, 50.0)
+        lambda_2 = trial.suggest_float("lambda_2", 0.0, 50.0)
+        lambda_3 = trial.suggest_float("lambda_3", 0.0, 50.0)
+        lambda_4 = trial.suggest_float("lambda_4", 0.0, 50.0)
+        self.lambdas = [1.0, lambda_1, lambda_2, lambda_3, lambda_4]
+
+        self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
 
         pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_ccc")
         _, metrics = self._seed_wise_train_validate(

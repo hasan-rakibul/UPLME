@@ -17,9 +17,10 @@ expt:
   lbl_split: 1.0 # percent of data to be used for labelled training
   add_noise_train: False
   add_noise_test: False
+  do_augment: True # only for the newsemp training
   
   lambdas: [1, 0, 0, 0, 0]
-  error_decay_factor: 1.0
+  error_decay_factor: 1.5
   
   do_train: True
   do_test: True # automatically, not done if do_tune is True

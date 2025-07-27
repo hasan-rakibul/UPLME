@@ -4,6 +4,7 @@ import logging
 import warnings
 import transformers
 from pathlib import Path
+import datetime
 
 import hydra
 from omegaconf import DictConfig
@@ -110,65 +111,45 @@ def main(cfg: DictConfig):
         cfg.val_check_interval = 5
         n_trials = 2
 
+    common_kwargs = dict(
+        labelled_train_files=labelled_train_files,
+        val_files=val_files,
+        test_files=test_files,
+        lr=lr,
+        train_bsz=train_bsz,
+        eval_bsz=eval_bsz,
+        # num_epochs=num_epochs,
+        max_steps=cfg.max_steps,
+        val_check_interval=cfg.val_check_interval,
+        delta=delta,
+        expt_name=expt_name,
+        debug=debug,
+        do_tune=do_tune,
+        do_train=do_train,
+        do_test=cfg.expt.do_test,
+        error_decay_factor=error_decay_factor,
+        lambdas=cfg.expt.lambdas,
+        approach=approach,
+        main_data=main_data,
+        lbl_split=cfg.expt.lbl_split,
+        plm_names=plm_names,
+        num_passes=cfg.expt.num_passes,
+        add_noise_train=cfg.expt.add_noise_train,
+        add_noise_test=cfg.expt.add_noise_test,
+        do_augment=cfg.expt.do_augment
+    )
+
     if is_two_models:
         if do_train:
             assert len(cfg.expt.lambdas) == 5, "lambdas must be a list of 5 elements"
         modelling = TwoModelsController(
-            num_passes=cfg.expt.num_passes,
-            labelled_train_files=labelled_train_files,
-            val_files=val_files,
-            test_files=test_files,
-            lr=lr,
-            train_bsz=train_bsz,
-            eval_bsz=eval_bsz,
-            # num_epochs=num_epochs,
-            max_steps=cfg.max_steps,
-            val_check_interval=cfg.val_check_interval,
-            delta=delta,
-            expt_name=expt_name,
-            debug=debug,
-            do_tune=do_tune,
-            do_train=do_train,
-            do_test=cfg.expt.do_test,
-            error_decay_factor=error_decay_factor,
-            lambdas=cfg.expt.lambdas,
-            approach=approach,
-            main_data=main_data,
-            # unlbl_data_files=unlbl_data_files,
-            lbl_split=cfg.expt.lbl_split,
-            plm_names=plm_names,
-            add_noise_train=cfg.expt.add_noise_train,
-            add_noise_test=cfg.expt.add_noise_test
+            **common_kwargs
         )
     else:
         if approach != "cross-basic" and do_train:
             assert len(cfg.expt.lambdas) == 3, "Number of lambdas must be 3 for cross-prob" 
         
-        modelling = PairedTextModelController(
-            labelled_train_files=labelled_train_files,
-            val_files=val_files,
-            test_files=test_files,
-            lr=lr,
-            train_bsz=train_bsz,
-            eval_bsz=eval_bsz,
-            # num_epochs=num_epochs,
-            max_steps=cfg.max_steps,
-            val_check_interval=cfg.val_check_interval,
-            delta=delta,
-            expt_name=expt_name,
-            debug=debug,
-            do_tune=do_tune,
-            do_train=do_train,
-            do_test=cfg.expt.do_test,
-            error_decay_factor=error_decay_factor,
-            lambdas=cfg.expt.lambdas,
-            approach=approach,
-            main_data=main_data,
-            lbl_split=cfg.expt.lbl_split,
-            plm_names=plm_names,
-            add_noise_train=cfg.expt.add_noise_train,
-            add_noise_test=cfg.expt.add_noise_test
-        )
+        modelling = PairedTextModelController(**common_kwargs)
 
     modelling.tune_train_test(
         n_trials=n_trials,
@@ -179,7 +160,8 @@ def main(cfg: DictConfig):
     # clean-up
     if overwrite_parent_dir is not None:
         new_log_file = list(Path(current_run_log_dir).glob("*.log"))[0]
-        shutil.move(new_log_file, os.path.join(parent_log_dir, "new-run.log"))
+        new_name = f"new-run_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log"
+        shutil.move(new_log_file, os.path.join(parent_log_dir, new_name))
         if do_tune:
             # maybe there are other files to move
             pass

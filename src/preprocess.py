@@ -381,6 +381,7 @@ class PairedTextDataModule:
             )
 
             if os.path.exists(save_as):
+                log_info(logger, f"IMPORTANT: Loading saved augmented data. Hence, sanitising and adding noise is not being done. Whatever was done during augmentation is being used.")
                 log_info(logger, f"Reading data from {save_as}")
                 # Now it can be either augmentation done or need to be resumed
                 # so calling the augmenter again
@@ -393,7 +394,7 @@ class PairedTextDataModule:
                     all_data = newsemp_preprocessor.process_data(
                         data_paths=data_paths,
                         sanitise_labels=sanitise_newsemp_labels,
-                        add_noise=add_noise # FIXME: when saved augmented data is loaded, I cannot change the sanitisation and add_noise
+                        add_noise=add_noise
                     )
                 else:
                     # doesn't require much processing, so done here
@@ -518,9 +519,9 @@ class PairedTextDataModule:
     def get_train_dl(
             self, data_path_list: list, batch_size: int,
             sanitise_newsemp_labels: bool = True, add_noise: bool = False, seed: int | None = None,
-            is_newsemp: bool = True, lbl_split: float = 1.0
+            is_newsemp: bool = True, do_augment: bool = False, lbl_split: float = 1.0
         ):
-        do_augment = True if is_newsemp else False
+        # do_augment = True if is_newsemp else False
         
         return self._get_dl(
             data_path_list, shuffle=True, 

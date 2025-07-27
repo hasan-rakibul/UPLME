@@ -1,0 +1,19 @@
+hydra:
+  job:
+    name: "single-model_${expt.num_passes}-passes-best-is-it-reproducible"
+
+# FIXED
+is_two_models: False
+
+# Can change
+num_passes: 4
+
+lambdas: [1, 8.447698992585831, 4.088503464752342]
+# [nll, penalty, alignment]
+
+error_decay_factor: 1.5
+
+do_tune: False
+do_augment: True
+
+overwrite_parent_dir: null

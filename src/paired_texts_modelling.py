@@ -586,7 +586,8 @@ class PairedTextModelController(object):
         plm_names: list[str] = ["roberta-base"],
         num_passes: int = 1,
         add_noise_train: bool = False,
-        add_noise_test: bool = False
+        add_noise_test: bool = False,
+        do_augment: bool = False
     ):
         self.train_file = labelled_train_files
         self.val_file = val_files
@@ -610,6 +611,7 @@ class PairedTextModelController(object):
         self.approach = approach
         self.num_passes = num_passes
         self.add_noise_train = add_noise_train
+        self.do_augment = do_augment
 
         self.enable_early_stopping = True
         self.early_stopping_start_epoch = 5 # applicable for DelayedStartEarlyStopping
@@ -725,6 +727,7 @@ class PairedTextModelController(object):
             add_noise=self.add_noise_train,
             seed=seed,
             is_newsemp=self.is_newsemp_main,
+            do_augment=self.do_augment,
             lbl_split=self.lbl_split
         )
 
@@ -832,13 +835,11 @@ class PairedTextModelController(object):
         # self.lr = trial.suggest_categorical("lr", [1e-5, 2e-5, 3e-5, 4e-5])
         # self.train_bsz = trial.suggest_int("train_bsz", 8, 32, step=8)
 
-        lambda_1 = trial.suggest_float("lambda_1", 0.0, 10.0)
-        lambda_2 = trial.suggest_float("lambda_2", 0.0, 10.0)
+        lambda_1 = trial.suggest_float("lambda_1", 0.0, 50.0)
+        lambda_2 = trial.suggest_float("lambda_2", 0.0, 50.0)
         self.lambdas = [1.0, lambda_1, lambda_2]
         
         self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
-
-        self.num_passes = trial.suggest_int("num_passes", 1, 4)
 
         pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_ccc")
         _, metrics = self._seed_wise_train_validate(
