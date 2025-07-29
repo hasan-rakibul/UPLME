@@ -12,6 +12,9 @@ lambdas: [null, null, null] # being tuned / set in optuna objective
 # [nll, penalty, alignment]
 
 do_tune: True
-n_trials: 10
+n_trials: 20
 
-overwrite_parent_dir: outputs/2025-07-28/01-58-09_newsemp_cross-prob_lambdas-[None, None, None]_tune-True_single-model_4-passes
+do_train: False # training immediately after tuning with updated parameters is not properly configured
+do_test: False
+
+overwrite_parent_dir: outputs/2025-07-28/18-19-29_empstories_cross-prob_lambdas-[None, None, None]_tune-True_single-model_4-passes 

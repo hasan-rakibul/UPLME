@@ -43,7 +43,7 @@ def main(cfg: DictConfig):
     do_train = cfg.expt.do_train
     overwrite_parent_dir = cfg.expt.overwrite_parent_dir
     approach = cfg.expt.approach
-    main_data = cfg.main_data
+    main_data = cfg.expt.main_data
 
     is_two_models = cfg.expt.is_two_models
 
@@ -159,15 +159,19 @@ def main(cfg: DictConfig):
 
     # clean-up
     if overwrite_parent_dir is not None:
-        new_log_file = list(Path(current_run_log_dir).glob("*.log"))[0]
-        new_name = f"new-run_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log"
-        shutil.move(new_log_file, os.path.join(parent_log_dir, new_name))
-        if do_tune:
-            # maybe there are other files to move
-            pass
-        else:
-            shutil.rmtree(current_run_log_dir) # because results are saved in earlier log dir
-            log_info(logger, f"Deleted {current_run_log_dir}")
+        time_tag = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        # move the log file
+        log_file_to_move = list(Path(current_run_log_dir).glob("*.log"))[0]
+        new_name = f"new-run_{time_tag}.log"
+        shutil.move(log_file_to_move, os.path.join(parent_log_dir, new_name))
+        
+        # move the .hydra directory
+        new_name = f".hydra_{time_tag}"
+        shutil.move(os.path.join(current_run_log_dir, ".hydra"), os.path.join(parent_log_dir, new_name))
+        
+        # delete the log dir
+        shutil.rmtree(current_run_log_dir) # because results are saved in earlier log dir
+        log_info(logger, f"Deleted {current_run_log_dir}")
     if debug:
         shutil.rmtree(parent_log_dir)
         log_info(logger, f"Deleted {parent_log_dir}")

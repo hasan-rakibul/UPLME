@@ -621,6 +621,10 @@ class PairedTextModelController(object):
         self.plm_names = plm_names
         self.lbl_split = lbl_split
 
+        for plm_name in self.plm_names:
+            if not plm_name.startswith("roberta"): # TODO: also add condition of lambda (not done now because lambda is incosistent betn two and single models)
+                raise ValueError(f"Only roberta is supported for alignment loss. Got {plm_name}")
+
         self.dm = PairedTextDataModule(
             delta=self.delta,
             tokeniser_plms=self.plm_names,
@@ -839,7 +843,7 @@ class PairedTextModelController(object):
         lambda_2 = trial.suggest_float("lambda_2", 0.0, 50.0)
         self.lambdas = [1.0, lambda_1, lambda_2]
         
-        self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
+        # self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
 
         pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_ccc")
         _, metrics = self._seed_wise_train_validate(
@@ -896,7 +900,10 @@ class PairedTextModelController(object):
             # self.error_decay_factor = best_trial.params["error_decay_factor"]
             # self.loss_weights = [best_trial.params["penalty_weight"]]
             
+            # FIXME: this update is no longer correct as there is no self.lambda_1 for example.
+            # So, train right after tune is not using updated parameters.``
             for key, value in best_trial.params.items():
                 setattr(self, key, value)
         
-        self.train_test(seeds=seeds, parent_log_dir=parent_log_dir)
+        if self.do_train or self.do_test:
+            self.train_test(seeds=seeds, parent_log_dir=parent_log_dir)

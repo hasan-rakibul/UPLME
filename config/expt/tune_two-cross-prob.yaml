@@ -11,4 +11,7 @@ num_passes: 4
 do_tune: True
 n_trials: 20
 
+do_train: False # training immediately after tuning with updated parameters is not properly configured
+do_test: False
+
 overwrite_parent_dir: outputs/2025-07-28/01-52-43_newsemp_cross-prob_lambdas-[None, None, None, None, None]_tune-True_4-passes

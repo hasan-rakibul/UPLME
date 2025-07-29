@@ -1,0 +1,20 @@
+hydra:
+  job:
+    name: "single-model_${expt.num_passes}-passes-best-lambdas"
+
+# FIXED
+is_two_models: False
+main_data: newsemp
+
+# Can change
+num_passes: 4
+
+lambdas: [1, 17.000527783218715, 49.309166285421874]
+# [nll, penalty, alignment]
+
+error_decay_factor: 1.0 # didn't tune, but kept fixed
+
+do_tune: False
+do_augment: True
+
+overwrite_parent_dir: null

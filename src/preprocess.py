@@ -375,11 +375,15 @@ class PairedTextDataModule:
         if do_augment:
             filenames = [os.path.splitext(os.path.basename(path))[0]
                          for path in data_paths]
-            save_as = os.path.join(
-                os.path.commonpath(data_paths),
-                f"{'_'.join(filenames)}_augmented.tsv"
-            )
-
+            if len(filenames) > 1:
+                save_as = os.path.join(
+                    os.path.commonpath(data_paths),
+                    f"{'_'.join(filenames)}_augmented.tsv"
+                )
+            else:
+                # in that case, common path doesn't make sense
+                save_as = os.path.join(os.path.dirname(data_paths[0]), f"{filenames[0]}_augmented.tsv")
+            
             if os.path.exists(save_as):
                 log_info(logger, f"IMPORTANT: Loading saved augmented data. Hence, sanitising and adding noise is not being done. Whatever was done during augmentation is being used.")
                 log_info(logger, f"Reading data from {save_as}")

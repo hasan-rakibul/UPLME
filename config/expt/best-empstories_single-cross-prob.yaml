@@ -4,12 +4,15 @@ hydra:
 
 # FIXED
 is_two_models: False
+main_data: empstories
 
 # Can change
 num_passes: 4
 
 lambdas: [1, 27.763313657833034, 14.919400077248078]
 # [nll, penalty, alignment]
+
+error_decay_factor: 1.0 # didn't tune, but kept fixed
 
 do_tune: False
 do_augment: True
