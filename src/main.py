@@ -12,7 +12,7 @@ from omegaconf import DictConfig
 from utils import retrieve_newsemp_file_names, log_info
 
 from paired_texts_modelling import PairedTextModelController
-from ssl_modelling import TwoModelsController
+from consistency_modelling import TwoModelsController
 
 logger = logging.getLogger(__name__)
 

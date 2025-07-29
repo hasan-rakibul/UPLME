@@ -623,7 +623,7 @@ class TwoModelsController(PairedTextModelController):
         lambda_4 = trial.suggest_float("lambda_4", 0.0, 50.0)
         self.lambdas = [1.0, lambda_1, lambda_2, lambda_3, lambda_4]
 
-        self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
+        # self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
 
         pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_ccc")
         _, metrics = self._seed_wise_train_validate(

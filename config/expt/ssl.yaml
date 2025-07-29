@@ -1,7 +1,0 @@
-hydra:
-  job:
-    name: "ssl"
-
-lambdas: []
-#### Resume training
-# overwrite_parent_dir: 

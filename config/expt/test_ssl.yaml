@@ -1,7 +1,0 @@
-hydra:
-  job:
-    name: "" # doesn't matter as we save it in the parent dir
-
-do_train: False
-do_test: True
-overwrite_parent_dir: outputs/2025-07-20/15-16-13_newsemp_cross-prob_split-0.1_lambda0-1_lambda1-1_lambda2-1_lambda3-1
