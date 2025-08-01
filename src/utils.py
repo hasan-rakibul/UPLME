@@ -246,17 +246,23 @@ def retrieve_newsemp_file_names(config: OmegaConf) -> tuple[list, list, list]:
     llm = "llama"
     train_attr = f"train_{llm}"
     val_attr = f"val_{llm}"
-    test_attr = f"test_{llm}"
+
+    if config.expt.val_data == 2024:
+        test_attr = f"test_{llm}"
+    elif config.expt.val_data == 2022:
+        test_attr = f"test"
+    else:
+        raise ValueError(f"Validation {config.expt.val_data} is not configured for test.")
     
     train_file_list = []
-    for data in config.train_data:
+    for data in config.expt.train_data:
         train_file_list.append(getattr(config[data], train_attr))
-        if data != config.val_data:
+        if data != config.expt.val_data:
             # we don't want to include val data in the training data for the same year
             train_file_list.append(getattr(config[data], val_attr))
 
-    val_file_list = [getattr(config[config.val_data], val_attr)]
-    test_file_list = [getattr(config[config.val_data], test_attr)]
+    val_file_list = [getattr(config[config.expt.val_data], val_attr)]
+    test_file_list = [getattr(config[config.expt.val_data], test_attr)]
 
     return train_file_list, val_file_list, test_file_list
 

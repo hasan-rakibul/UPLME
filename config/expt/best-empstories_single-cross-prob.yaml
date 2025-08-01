@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "single-model_${expt.num_passes}-passes-optuna-best-lambdas"
+    name: "single-model_${expt.num_passes}-passes-optuna-best-lambdas-updated-rescaling"
 
 # FIXED
 is_two_models: False
@@ -9,7 +9,8 @@ main_data: empstories
 # Can change
 num_passes: 4
 
-lambdas: [1, 27.763313657833034, 14.919400077248078]
+# lambdas: [1, 27.763313657833034, 14.919400077248078]
+lambdas: [1, 44.267427035816425, 21.34894435683186]
 # [nll, penalty, alignment]
 
 error_decay_factor: 1.0 # didn't tune, but kept fixed

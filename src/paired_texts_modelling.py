@@ -11,6 +11,8 @@ import logging
 import numpy as np
 import os
 from pathlib import Path
+import pandas as pd
+from zipfile import ZipFile
 
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
@@ -278,6 +280,18 @@ class LitPairedTextModel(L.LightningModule):
             raise ValueError(f"Invalid penalty type: {self.penalty_type}")
 
         return penalty_loss
+
+    def _rescale_labels(self, labels: Tensor) -> Tensor:
+        if "newsemp" in self.log_dir: # very loose check. TODO: take a variable input; not done now because then I will not be able to load saved models
+            labels = (labels.float() - 4.0) / 3.0 # 1 is -1, 4 is 0, 7 is 1; like cos_sim
+        elif "empstories" in self.log_dir:
+            # generic, but not tested on newsemp
+            min_label = 1.0
+            max_label = 4.0
+            labels = 2 * (labels.float() - min_label) / (max_label - min_label) - 1
+        else:
+            raise ValueError(f"Alignment loss requires newsemp or empstories in the log directory name. Got {self.log_dir}")
+        return labels
     
     def _compute_alignment_betn_texts(self, input_ids: Tensor, hidden_state: Tensor, labels: Tensor) -> Tensor:
         # input_ids: (bsz, seq_len)
@@ -322,13 +336,10 @@ class LitPairedTextModel(L.LightningModule):
         input1_reprs = torch.stack(input1_reprs) # (bsz, hidden_dim)
         input2_reprs = torch.stack(input2_reprs)
 
-        # calculate loss        
         cos_sim = F.cosine_similarity(input1_reprs, input2_reprs)
                 
-        # Validate label range
-        assert labels.min() >= 1 and labels.max() <= 7, \
-            f"Labels should be in [1, 7], got range [{labels.min()}, {labels.max()}]"
-        labels = (labels.float() - 4.0) / 3.0 # 1 is -1, 4 is 0, 7 is 1; like cos_sim
+        labels = self._rescale_labels(labels)
+
         loss = F.mse_loss(cos_sim, labels)
         return loss
     
@@ -514,7 +525,8 @@ class LitPairedTextModel(L.LightningModule):
         np.save(save_as, output_dict)
         log_info(logger, f"Saved output to {save_as}")
 
-        plot_uncertainy(output_dict, f"{self.log_dir}/uncertainty.pdf")
+        if "labels" in output_dict:
+            plot_uncertainy(output_dict, f"{self.log_dir}/uncertainty.pdf")
 
     def test_step(self, batch, batch_idx):
         if self.num_passes > 1:
@@ -553,6 +565,16 @@ class LitPairedTextModel(L.LightningModule):
                 sync_dist=True,
                 batch_size=self.test_outputs[0]["mean"].shape[0]
             )
+        else:
+            log_info(logger, "No labels found in test outputs. Assuming metrics to be calculated separately. Saving predictions.")
+            pred_df = pd.DataFrame({'emp': all_means, 'dis': all_means}) # we're not predicting distress, just aligning with submission system
+            save_as = f"{self.log_dir}/predictions_EMP.tsv"
+            pred_df.to_csv(save_as, sep='\t', index=None, header=None)
+            # CodaLab requires zip file
+            # save_as = f"{self.log_dir}/predictions.zip"
+            # with ZipFile(save_as, 'w') as zipf:
+            #     zipf.write(f"{self.log_dir}/predictions_EMP.tsv", arcname="predictions_EMP.tsv")
+            log_info(logger, f"Saved predictions to {save_as}")
 
         if self.approach != "cross-basic":
             # meaning that the model is probabilistic
@@ -585,6 +607,7 @@ class PairedTextModelController(object):
         lbl_split: float = 1.0,
         plm_names: list[str] = ["roberta-base"],
         num_passes: int = 1,
+        sanitise_labels: bool = False,
         add_noise_train: bool = False,
         add_noise_test: bool = False,
         do_augment: bool = False
@@ -610,6 +633,7 @@ class PairedTextModelController(object):
         self.lambdas = lambdas
         self.approach = approach
         self.num_passes = num_passes
+        self.sanitise_labels = sanitise_labels
         self.add_noise_train = add_noise_train
         self.do_augment = do_augment
 
@@ -640,14 +664,14 @@ class PairedTextModelController(object):
             self.val_dl = self.dm.get_val_dl(
                 data_path_list=self.val_file,
                 batch_size=self.eval_bsz,
-                sanitise_newsemp_labels=False,
+                sanitise_newsemp_labels=self.sanitise_labels,
                 add_noise=False,
                 is_newsemp=self.is_newsemp_main
             )
         if self.do_test:
             self.test_dl = self.dm.get_test_dl(
                 data_path_list=self.test_file, batch_size=self.eval_bsz, 
-                sanitise_newsemp_labels=False, add_noise=add_noise_test,
+                sanitise_newsemp_labels=self.sanitise_labels, add_noise=add_noise_test,
                 is_newsemp=self.is_newsemp_main
             )
            
@@ -727,7 +751,7 @@ class PairedTextModelController(object):
         train_dl = self.dm.get_train_dl(
             data_path_list=self.train_file,
             batch_size=self.train_bsz,
-            sanitise_newsemp_labels=False,
+            sanitise_newsemp_labels=self.sanitise_labels,
             add_noise=self.add_noise_train,
             seed=seed,
             is_newsemp=self.is_newsemp_main,
@@ -900,8 +924,9 @@ class PairedTextModelController(object):
             # self.error_decay_factor = best_trial.params["error_decay_factor"]
             # self.loss_weights = [best_trial.params["penalty_weight"]]
             
-            # FIXME: this update is no longer correct as there is no self.lambda_1 for example.
-            # So, train right after tune is not using updated parameters.``
+            if self.do_train:
+                raise ValueError("Train right after tune with updated parameters is not using updated parameters. Set the parameters and train separately after tuning.")
+                                #  " update is no longer correct as there is no self.lambda_1 for example."
             for key, value in best_trial.params.items():
                 setattr(self, key, value)
         

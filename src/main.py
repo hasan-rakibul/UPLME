@@ -36,7 +36,7 @@ def main(cfg: DictConfig):
     lr = cfg.lr
     train_bsz = cfg.train_bsz
     eval_bsz = cfg.eval_bsz
-    delta = cfg.delta
+    delta = cfg.expt.delta
     n_trials = cfg.expt.n_trials
     error_decay_factor = cfg.expt.error_decay_factor
     do_tune = cfg.expt.do_tune
@@ -93,7 +93,7 @@ def main(cfg: DictConfig):
     if overwrite_parent_dir is not None:
         log_info(logger, f"Using overwrite_logging_dir {overwrite_parent_dir}")
         assert os.path.isdir(overwrite_parent_dir), f"{overwrite_parent_dir} is not a directory \
-            Note it must be a **parent** diretory like outputs/yyyy-mm-dd/hh-mm-ss_xx."
+            Note it must be a **parent** diretory like outputs/yyyy-mm-dd/hh-mm-ss_xx"
         log_info(logger, "If you are resuming training, MAKE SURE you manually DELETE any last directory, for which training was partially completed.")
         current_run_log_dir = parent_log_dir
         parent_log_dir = os.path.normpath(overwrite_parent_dir) # normpath to remove trailing slashes if any
@@ -134,6 +134,7 @@ def main(cfg: DictConfig):
         lbl_split=cfg.expt.lbl_split,
         plm_names=plm_names,
         num_passes=cfg.expt.num_passes,
+        sanitise_labels=cfg.expt.sanitise_labels,
         add_noise_train=cfg.expt.add_noise_train,
         add_noise_test=cfg.expt.add_noise_test,
         do_augment=cfg.expt.do_augment
@@ -143,6 +144,7 @@ def main(cfg: DictConfig):
         if do_train:
             assert len(cfg.expt.lambdas) == 5, "lambdas must be a list of 5 elements"
         modelling = TwoModelsController(
+            is_ucvme=cfg.expt.is_ucvme,
             **common_kwargs
         )
     else:

@@ -1,0 +1,14 @@
+hydra:
+  job:
+    name: "test2022" # doesn't matter as we save it in the parent dir
+
+main_data: newsemp
+val_data: 2022
+
+approach: cross-prob
+is_two_models: False
+
+do_train: False
+do_test: True
+
+overwrite_parent_dir: outputs/2025-07-28/14-22-44_newsemp_cross-prob_lambdas-[1, 9.110462266012783, 5.5635098435909764]_tune-False_single-model_4-passes-best

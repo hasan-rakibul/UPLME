@@ -1,4 +1,3 @@
-from operator import add
 import random
 import numpy as np
 import pandas as pd
@@ -447,7 +446,9 @@ class PairedTextDataModule:
                     inplace=True
                 )
         
-        keep_col = ["text_1", "text_2", "labels"]
+        keep_col = ["text_1", "text_2"]
+        if "labels" in all_data.columns: # for non 2024 test set, we don't have labels
+            keep_col.append("labels")
         if add_noise:
             keep_col.append("noise")
         all_data = all_data[keep_col]
@@ -501,13 +502,14 @@ class PairedTextDataModule:
             do_augment=do_augment
         )
 
+        # for baseline (of ssl) experiments, we'd only use x% data for training
         if lbl_split < 1.0:
             split_ds = hf_ds.train_test_split(
                 train_size=lbl_split,
                 shuffle=True,
                 seed=seed
             )
-            hf_ds = split_ds["train"] # for baseline (of ssl) experiments, we'd only use x% data for training
+            hf_ds = split_ds["train"]
 
         return DataLoader(
             hf_ds,
