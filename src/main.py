@@ -121,6 +121,7 @@ def main(cfg: DictConfig):
         # num_epochs=num_epochs,
         max_steps=cfg.max_steps,
         val_check_interval=cfg.val_check_interval,
+        noise_level=cfg.expt.noise_level,
         delta=delta,
         expt_name=expt_name,
         debug=debug,

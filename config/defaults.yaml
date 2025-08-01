@@ -20,7 +20,8 @@ expt:
   # Only keep samples if the difference between 'empathy' and 'llm_empathy' < delta during sanitisation
   # If delta is null (i.e, None), then we don't filter any samples
   delta: null
-  
+
+  noise_level: 0.2 # level of label noise to be added, if add_noise is True
   add_noise_train: False
   add_noise_test: False
   do_augment: True
@@ -52,8 +53,6 @@ eval_bsz: 16
 
 # seeds: [0, 42, 100, 999, 1234]
 seeds: [0, 42, 100]
-
-
 
 ### if newsemp:
 # all files list that we can use for training / validation / testing

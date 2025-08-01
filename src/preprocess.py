@@ -24,13 +24,14 @@ class NewsEmpPreprocessorFromRaw:
     """
     def __init__(
         self,
+        noise_level: float,
         delta: float | None
     ):
         self.delta = delta
         
         # keeping them constant for now, can make them arguments if required
         self.label_shift = 3.0
-        self.noise_level = 0.2
+        self.noise_level = noise_level
         self.label_min = 1.0
         self.label_max = 7.0
         self.label_column = "empathy"
@@ -185,12 +186,14 @@ class BiEncoderDataCollator:
 class PairedTextDataModule:
     def __init__(
             self, 
-            delta: float, 
+            noise_level: float,
+            delta: float | None, 
             tokeniser_plms: list[str],
             # is_separate_tokeniser: bool
             tokenise_paired_texts_each_tokeniser: bool
         ):
 
+        self.noise_level = noise_level
         self.delta = delta
         # self.is_separate_tokeniser = is_separate_tokeniser
         self.tokenise_paired_texts_each_tokeniser = tokenise_paired_texts_each_tokeniser
@@ -393,7 +396,7 @@ class PairedTextDataModule:
             else:
                 log_info(logger, f"No saved augmented data found as {save_as}. Processing from scratch.")
                 if is_newsemp:
-                    newsemp_preprocessor = NewsEmpPreprocessorFromRaw(delta=self.delta)
+                    newsemp_preprocessor = NewsEmpPreprocessorFromRaw(noise_level=self.noise_level, delta=self.delta)
                     all_data = newsemp_preprocessor.process_data(
                         data_paths=data_paths,
                         sanitise_labels=sanitise_newsemp_labels,
@@ -422,7 +425,7 @@ class PairedTextDataModule:
         else:
             log_info(logger, "Processing from scratch without any augmentation.")
             if is_newsemp:
-                newsemp_preprocessor = NewsEmpPreprocessorFromRaw(delta=self.delta)
+                newsemp_preprocessor = NewsEmpPreprocessorFromRaw(noise_level=self.noise_level, delta=self.delta)
                 all_data = newsemp_preprocessor.process_data(
                     data_paths=data_paths,
                     sanitise_labels=sanitise_newsemp_labels,

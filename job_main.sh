@@ -16,8 +16,6 @@ module load pytorch/2.2.0-rocm5.7.3
 # EXPT_FILE_NAME="single-cross-prob"
 # EXPT_FILE_NAME="tune_single-cross-prob"
 
-EXPT_FILE_NAME="single-cross-prob-label-noise"
-
 # EXPT_FILE_NAME="two-cross-prob"
 # EXPT_FILE_NAME="tune_two-cross-prob"
 
@@ -32,6 +30,9 @@ EXPT_FILE_NAME="single-cross-prob-label-noise"
 # EXPT_FILE_NAME="test_2022"
 
 # EXPT_FILE_NAME="ucvme"
+
+# EXPT_FILE_NAME="single-cross-prob-label-noise"
+EXPT_FILE_NAME="cross-basic-plm-mlp-label-noise"
 
 singularity exec $SINGULARITY_CONTAINER bash -c "\
 source $MYSOFTWARE/.venv/bin/activate && \

@@ -15,7 +15,7 @@ import pandas as pd
 from zipfile import ZipFile
 
 import lightning as L
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import WandbLogger
 
 import optuna
@@ -594,7 +594,8 @@ class PairedTextModelController(object):
         # num_epochs: int,
         max_steps: int,
         val_check_interval: int | float,
-        delta: float,
+        noise_level: float,
+        delta: float | None,
         expt_name: str,
         debug: bool,
         do_tune: bool = False,
@@ -623,6 +624,7 @@ class PairedTextModelController(object):
         self.max_steps = max_steps
         self.val_check_interval = val_check_interval
 
+        self.noise_level = noise_level
         self.delta = delta
         self.expt_name = expt_name
         self.debug = debug
@@ -650,6 +652,7 @@ class PairedTextModelController(object):
                 raise ValueError(f"Only roberta is supported for alignment loss. Got {plm_name}")
 
         self.dm = PairedTextDataModule(
+            noise_level=self.noise_level,
             delta=self.delta,
             tokeniser_plms=self.plm_names,
             tokenise_paired_texts_each_tokeniser=True \
