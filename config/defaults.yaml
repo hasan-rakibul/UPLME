@@ -7,12 +7,12 @@ hydra:
 # Notes: https://hydra.cc/docs/tutorials/basic/your_first_app/defaults/
 defaults:
   - _self_ # means configs under expt here will be overwritten by expt/...yaml
-  - expt: ssl
+  - expt: single-cross-prob
 
 # NOTE: the following are applied unless they are overwritten by the expt/xx.yaml
 expt:
   overwrite_parent_dir: null
-  approach: cross-prob # options: siamese, cross-basic, bi-prob, cross-prob
+  approach: cross-prob # options: cross-basic, cross-prob
   is_two_models: True
   lbl_split: 1.0 # percent of data to be used for labelled training
   sanitise_labels: False # whether to sanitise labels for newsemp dataset
@@ -21,7 +21,7 @@ expt:
   # If delta is null (i.e, None), then we don't filter any samples
   delta: null
 
-  noise_level: 0.2 # level of label noise to be added, if add_noise is True
+  noise_level: 0.0 # level of label noise to be added, if add_noise is True
   add_noise_train: False
   add_noise_test: False
   do_augment: True
@@ -44,14 +44,12 @@ expt:
   train_data: [2024, 2022]
   val_data: 2024 # test would be same as val_data as in in-sample setting
 
-# num_epochs: 20
-max_steps: 6000 # 4000 originally
+max_steps: 6000
 val_check_interval: 200 # num steps (if int) or portion of epoch (if float)
 lr: 3.0e-5
 train_bsz: 16
 eval_bsz: 16
 
-# seeds: [0, 42, 100, 999, 1234]
 seeds: [0, 42, 100]
 
 ### if newsemp:

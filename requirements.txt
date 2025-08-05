@@ -12,6 +12,10 @@ omegaconf
 scikit-learn
 wandb
 
+# significance testing
+seaborn
+statannotations
+
 # Optuna hyperparameter optimisation
 optuna
 optuna-integration[pytorch-lightning]

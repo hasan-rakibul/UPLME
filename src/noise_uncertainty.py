@@ -46,6 +46,6 @@ def plot_uncertainty(output_npy_path: Path):
 
 
 if __name__ == "__main__":
-    output_npy_path = Path("outputs/2025-07-26/01-19-12_newsemp_cross-prob_split-1.0_single-model_lambdas-[1, 1, 0]_4-passes/seed_42/outputs_new.npy")
+    output_npy_path = Path("outputs/2025-08-01/11-12-20_newsemp_cross-prob_lambdas-[1, 9.110462266012783, 5.5635098435909764]_tune-False_single-model_4-passes-label-noise-0.1/seed_0/outputs_new.npy")
 
     plot_uncertainty(output_npy_path)

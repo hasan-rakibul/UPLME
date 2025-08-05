@@ -11,4 +11,8 @@ is_two_models: False
 do_train: False
 do_test: True
 
+# UPLME
 overwrite_parent_dir: outputs/2025-07-28/14-22-44_newsemp_cross-prob_lambdas-[1, 9.110462266012783, 5.5635098435909764]_tune-False_single-model_4-passes-best
+
+# PLM_MLP
+# overwrite_parent_dir: outputs/2025-07-23/18-29-00_newsemp_cross-basic_split-1.0_lambda2-0_no-sanitise-labels

@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "single-model_${expt.num_passes}-passes-optuna-best-lambdas"
+    name: "single-model_${expt.num_passes}-passes"
 
 # FIXED
 is_two_models: False
@@ -8,7 +8,7 @@ is_two_models: False
 # Can change
 num_passes: 4
 
-lambdas: [1, 27.763313657833034, 14.919400077248078]
+lambdas: [1, 1, 1]
 # [nll, penalty, alignment]
 
 do_tune: False

@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: ""
+    name: "5lambdas"
 
 approach: cross-basic
 is_two_models: False
@@ -9,4 +9,4 @@ lambdas: [null, null, 0]
 # [NA, NA, alignment]
 
 #### Resume training
-# overwrite_parent_dir: 
+overwrite_parent_dir: null

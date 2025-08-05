@@ -28,6 +28,81 @@ from utils import log_info, plot_uncertainy, process_seedwise_metrics, DelayedSt
 from util_uncertainty_metrics import calculate_unc_metrics
 
 logger = logging.getLogger(__name__)
+
+class SiameseModel(torch.nn.Module):
+    def __init__(self, plm_name: str):
+        super().__init__()
+        self.pooling = "mean"
+        
+        self.plm = AutoModel.from_pretrained(plm_name)
+
+    def forward(self, batch):
+        output_1 = self.plm(
+            input_ids=batch['input_ids_1'],
+            attention_mask=batch['attention_mask_1']
+        )
+        output_2 = self.plm(
+            input_ids=batch['input_ids_2'],
+            attention_mask=batch['attention_mask_2']
+        )
+
+        if self.pooling == "mean":
+            attn_1 = batch['attention_mask_1']
+            attn_2 = batch['attention_mask_2']
+            sentence_representation_1 = (output_1.last_hidden_state * attn_1.unsqueeze(-1)).sum(-2) / attn_1.sum(dim=-1).unsqueeze(-1)
+            sentence_representation_2 = (output_2.last_hidden_state * attn_2.unsqueeze(-1)).sum(-2) / attn_2.sum(dim=-1).unsqueeze(-1)
+        elif self.pooling == "cls":
+            sentence_representation_1 = output_1.last_hidden_state[:, 0, :]
+            sentence_representation_2 = output_2.last_hidden_state[:, 0, :]
+        elif self.pooling == "roberta-pooler":
+            sentence_representation_1 = output_1.pooler_output
+            sentence_representation_2 = output_2.pooler_output
+        
+        cos_sim = F.cosine_similarity(sentence_representation_1, sentence_representation_2)
+        raise NotImplementedError(f"Using cosine similarity in MSE loss calculation requires some transformation to be in the same range. \
+                                  which is most probably not done.")
+        
+        return cos_sim, None # there's no variance being modelled, just return None for compatibility
+
+
+class BiEncoderProbModel(torch.nn.Module):
+    def __init__(
+        self,
+        plm_names: list[str]
+    ):
+        super().__init__()
+        plm_1, plm_2 = plm_names
+        self.plm_1 = AutoModel.from_pretrained(plm_1)
+        self.plm_2 = AutoModel.from_pretrained(plm_2)
+
+        self.fc_concat = torch.nn.Linear(1536, 768)
+        self.fc_m = torch.nn.Linear(768, 1)
+        self.fc_v = torch.nn.Linear(768, 1)
+
+    def forward(self, batch):
+        output_1 = self.plm_1(
+            input_ids=batch['input_ids_1'],
+            attention_mask=batch['attention_mask_1']
+        )
+        output_2 = self.plm_2(
+            input_ids=batch['input_ids_2'],
+            attention_mask=batch['attention_mask_2']
+        )
+
+        x_1 = output_1.last_hidden_state[:, 0, :]
+        x_2 = output_2.last_hidden_state[:, 0, :]
+
+        x = torch.cat((x_1, x_2), dim=1)
+        x = F.relu(self.fc_concat(x))
+        x = F.dropout(x, p=0.25)
+
+        raise NotImplementedError("Needs to fix the FC layers and the output, like cross-encoder.")
+        unbounded_mean = self.fc_m(x)
+        scaled_mean = self.min_score + (self.max_score - self.min_score) * torch.sigmoid(unbounded_mean)
+        
+        var = F.softplus(self.fc_v(x)) # variance must be positive
+
+        return scaled_mean.squeeze(), var.squeeze()
     
 class CrossEncoderProbModel(torch.nn.Module):
     def __init__(self, plm_name: str):
@@ -127,6 +202,10 @@ class LitPairedTextModel(L.LightningModule):
         self.approach = approach
         if self.approach == "cross-basic":
             self.model = CrossEncoderBasicModel(plm_name=plm_names[0])
+        # elif self.approach == "siamese":
+        #     self.model = SiameseModel(plm_name=plm_names[0])
+        # elif self.approach == "bi-prob":
+        #     self.model = BiEncoderProbModel(plm_names=plm_names)
         elif self.approach == "cross-prob":
             self.model = CrossEncoderProbModel(plm_name=plm_names[0])
         else:
@@ -188,9 +267,15 @@ class LitPairedTextModel(L.LightningModule):
         errors = (mean - labels) ** 2
 
         if self.penalty_type == "exp-decay":
+            # exponential decay weighting
+            # When error is small, weight ~ exp(-alpha*small) ~ 1; when error is large, weight decays
             weight = torch.exp(-self.error_decay_factor * errors)
             var = var * weight
             penalty_loss = torch.linalg.norm(var, ord=2) / var.numel()
+        elif self.penalty_type == "l1":
+            penalty_loss = torch.mean(torch.abs(var))
+        elif self.penalty_type == "var-error-prod":
+            penalty_loss = torch.mean(var * errors)
         else:
             raise ValueError(f"Invalid penalty type: {self.penalty_type}")
 
@@ -308,6 +393,9 @@ class LitPairedTextModel(L.LightningModule):
             elif self.approach == "cross-basic":
                 mean, hidden_state = self.model(batch)
                 var = torch.zeros_like(mean)
+            # else:
+            #     mean, var = self.model(batch)
+            #     hidden_state = None
             
             means.append(mean)
             varss.append(var)
@@ -533,6 +621,7 @@ class PairedTextModelController(object):
         self.lr = lr
         self.train_bsz = train_bsz
         self.eval_bsz = eval_bsz
+        # self.num_epochs = num_epochs
         self.max_steps = max_steps
         self.val_check_interval = val_check_interval
 
@@ -602,6 +691,13 @@ class PairedTextModelController(object):
                 min_delta=0,
                 verbose=True
             )
+            # early_stopping = EarlyStopping(
+            #     monitor="val_rmse",
+            #     patience=2,
+            #     mode="min",
+            #     min_delta=0,
+            #     verbose=True
+            # )
 
             callbacks.append(early_stopping)
         else:
@@ -612,6 +708,13 @@ class PairedTextModelController(object):
             checkpoint = ModelCheckpoint(
                 save_top_k=1 # saves the last checkpoint; no need to save_last=True as it will save another checkpoint unnecessarily
             )
+
+            # best only
+            # checkpoint = ModelCheckpoint(
+            #     save_top_k=1,
+            #     monitor="val_ccc",
+            #     mode="max"
+            # )
             
             callbacks.append(checkpoint)
 
@@ -761,6 +864,9 @@ class PairedTextModelController(object):
         process_seedwise_metrics(results, save_as)
 
     def optuna_objective(self, trial: optuna.trial.Trial, optuna_seed: int, optuna_log_dir: str) -> float:
+        # self.lr = trial.suggest_categorical("lr", [1e-5, 2e-5, 3e-5, 4e-5])
+        # self.train_bsz = trial.suggest_int("train_bsz", 8, 32, step=8)
+
         lambda_1 = trial.suggest_float("lambda_1", 0.0, 50.0)
         lambda_2 = trial.suggest_float("lambda_2", 0.0, 50.0)
         self.lambdas = [1.0, lambda_1, lambda_2]
@@ -815,6 +921,12 @@ class PairedTextModelController(object):
 
             fig_imp = optuna.visualization.plot_param_importances(study)
             fig_imp.write_image(os.path.join(parent_log_dir, "Optuna_param_importances.pdf"))
+
+            # update the parameters and retrain
+            # self.lr = best_trial.params["lr"]
+            # self.train_bsz = best_trial.params["train_bsz"]
+            # self.error_decay_factor = best_trial.params["error_decay_factor"]
+            # self.loss_weights = [best_trial.params["penalty_weight"]]
             
             if self.do_train:
                 raise ValueError("Train right after tune with updated parameters is not using updated parameters. Set the parameters and train separately after tuning.")

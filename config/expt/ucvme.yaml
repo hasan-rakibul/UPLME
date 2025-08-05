@@ -4,15 +4,15 @@ hydra:
 
 is_ucvme: True
 
-lambdas: [1, null, null, null, null] # only one weight in UCVME
+lambdas: [12.108875317622909, null, null, null, null] # only one weight in UCVME
 
 lbl_split: 1
 num_passes: 4
 
 main_data: empstories 
 
-do_tune: True
+do_tune: False
 n_trials: 10
-do_train: False
+do_train: True
 
-overwrite_parent_dir: outputs/2025-07-30/19-36-14_empstories_cross-prob_lambdas-[1, None, None, None, None]_tune-True_4-passes-ucvme
+overwrite_parent_dir: null 

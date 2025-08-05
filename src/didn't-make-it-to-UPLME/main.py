@@ -32,6 +32,7 @@ def main(cfg: DictConfig):
     
     # things coming from the config
     seeds = cfg.seeds
+    # num_epochs = cfg.num_epochs
     lr = cfg.lr
     train_bsz = cfg.train_bsz
     eval_bsz = cfg.eval_bsz
@@ -46,7 +47,9 @@ def main(cfg: DictConfig):
 
     is_two_models = cfg.expt.is_two_models
 
+    # other plm options: cardiffnlp/twitter-roberta-base-sentiment-latest, siebert/sentiment-roberta-large-english
     if approach == "cross-basic":
+        # self.plm_names = ["cross-encoder/stsb-roberta-base"]
         plm_names = ["roberta-base"]
     elif approach == "siamese":
         plm_names = ["facebook/bart-base", "facebook/bart-base"]
@@ -54,7 +57,11 @@ def main(cfg: DictConfig):
         plm_names = ["roberta-base", "roberta-base"]
     elif approach == "cross-prob":
         if is_two_models:
+            # self.plm_names = ["cross-encoder/stsb-roberta-base"]
+            # self.plm_names = ["roberta-base", "answerdotai/ModernBERT-base"]
+            # self.plm_names = ["answerdotai/ModernBERT-base", "answerdotai/ModernBERT-base"]
             plm_names = ["roberta-base", "roberta-base"]
+            # self.plm_names = ["roberta-base", "cardiffnlp/twitter-roberta-base-sentiment-latest"]
             if plm_names[0] != "roberta-base" or plm_names[1] != "roberta-base":
                 warnings.warn("Between-text loss is hardcoded for roberta-base")
         else:
@@ -70,10 +77,12 @@ def main(cfg: DictConfig):
         labelled_train_files = newsemp_train_files
         val_files = newsemp_val_files
         test_files = newsemp_test_files
+        # unlbl_data_files = empstories_train_files + empstories_val_files + empstories_test_files
     elif main_data == "empstories":
         labelled_train_files = empstories_train_files
         val_files = empstories_val_files
         test_files = empstories_test_files
+        # unlbl_data_files = newsemp_train_files + newsemp_val_files + newsemp_test_files
     else:
         raise ValueError("main_data should be either newsemp or empstories")
     log_info(logger, f"Train data: {labelled_train_files}\tVal data: {val_files}\tTest data: {test_files}")
@@ -97,6 +106,7 @@ def main(cfg: DictConfig):
         log_info(logger, "Debug mode")
         logger.setLevel(logging.DEBUG)
         seeds = seeds[:2] # reduce the number of seeds for debugging
+        # num_epochs = 2
         cfg.max_steps = 50
         cfg.val_check_interval = 5
         n_trials = 2
@@ -108,6 +118,7 @@ def main(cfg: DictConfig):
         lr=lr,
         train_bsz=train_bsz,
         eval_bsz=eval_bsz,
+        # num_epochs=num_epochs,
         max_steps=cfg.max_steps,
         val_check_interval=cfg.val_check_interval,
         noise_level=cfg.expt.noise_level,
@@ -131,6 +142,8 @@ def main(cfg: DictConfig):
     )
 
     if is_two_models:
+        if do_train:
+            assert len(cfg.expt.lambdas) == 5, "lambdas must be a list of 5 elements"
         modelling = TwoModelsController(
             is_ucvme=cfg.expt.is_ucvme,
             **common_kwargs
