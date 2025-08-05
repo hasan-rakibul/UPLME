@@ -32,3 +32,5 @@ sbatch job_main.sh
 
 ## License
 This repostitory is license under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+
+The terms and conditions of [NewsEmpathy22](https://codalab.lisn.upsaclay.fr/competitions/834#learn_the_details-terms_and_conditions) and [NewsEmpathy24](https://codalab.lisn.upsaclay.fr/competitions/18810#learn_the_details-terms_and_conditions) includes the following statement: _"The dataset should only be used for scientific or research purposes. Any other use is explicitly prohibited."_ The augmented datasets available in this repository are released under the same licenses and conditions of the original datasets.
