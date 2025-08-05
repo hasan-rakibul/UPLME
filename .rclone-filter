@@ -2,6 +2,7 @@
 + OTHERS/**
 + src/archived/**
 + src/ucvme/**
++ src/didn't-make-it-to-UPLME/**
 + data/**
 + .declare_api_key.sh
 + analysis-and-visualisation.ipynb
