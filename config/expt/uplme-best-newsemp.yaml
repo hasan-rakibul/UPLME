@@ -17,4 +17,10 @@ error_decay_factor: 1.5
 do_tune: False
 do_augment: True
 
-overwrite_parent_dir: outputs/2025-07-28/14-22-44_newsemp_cross-prob_lambdas-[1, 9.110462266012783, 5.5635098435909764]_tune-False_single-model_4-passes-best
+
+overwrite_parent_dir: null
+
+# if testing only
+# do_train: False
+# do_test: True
+# overwrite_parent_dir: outputs/2025-07-28/14-22-44_newsemp_cross-prob_lambdas-[1, 9.110462266012783, 5.5635098435909764]_tune-False_single-model_4-passes-best

@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "test2022" # doesn't matter as we save it in the parent dir
+    name: "" # doesn't matter as we save it in the parent dir
 
 main_data: newsemp
 val_data: 2022

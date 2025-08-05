@@ -21,4 +21,4 @@ n_trials: 10
 do_train: False # training immediately after tuning with updated parameters is not properly configured
 do_test: False
 
-overwrite_parent_dir: outputs/2025-07-31/00-52-25_empstories_cross-prob_lambdas-[None, None, None]_tune-True_single-model_4-passes_alpha1.5
+overwrite_parent_dir: null

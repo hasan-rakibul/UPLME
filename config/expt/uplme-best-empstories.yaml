@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "single-model_${expt.num_passes}-passes-optuna-best-lambdas-updated-rescaling"
+    name: "single-model_${expt.num_passes}-passes-best"
 
 # FIXED
 is_two_models: False

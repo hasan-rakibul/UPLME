@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "5lambdas"
+    name: "baseline"
 
 approach: cross-basic
 is_two_models: False
