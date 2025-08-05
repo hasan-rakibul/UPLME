@@ -18,3 +18,8 @@ do_tune: False
 do_augment: True
 
 overwrite_parent_dir: null
+
+# if testing only
+# do_train: False
+# do_test: True
+# overwrite_parent_dir: outputs/2025-07-31/00-28-34_empstories_cross-prob_lambdas-[1, 44.267427035816425, 21.34894435683186]_tune-False_single-model_4-passes-optuna-best-lambdas-updated-rescaling

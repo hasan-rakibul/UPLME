@@ -1,10 +1,10 @@
 # include things we need
 + OTHERS/**
 + src/archived/**
-+ src/ucvme/**
-+ src/didn't-make-it-to-UPLME/**
++ src/ucvme-original/**
++ src/not-required-in-UPLME/**
 + data/**
-+ .declare_api_key.sh
++ outputs/**
 + analysis-and-visualisation.ipynb
 
 # exclue-everything

@@ -1,12 +1,12 @@
 OTHERS/**
 src/archived/**
-src/ucvme/**
+src/ucvme-original/**
+src/not-required-in-UPLME/**
 data/**
 
 #generated from hydra
 outputs/** 
 
-.declare_api_key.sh
 .rclone.sh
 .torchpython.sh
 analysis-and-visualisation.ipynb
