@@ -1,14 +1,14 @@
 # UPLME: Uncertainty-Aware Probabilistic Language Modelling for Robust Empathy Regression
 
-This repository is the official implementation of our above-titled paper, currently under review.
+This repository is the official implementation (released on 05-Aug-25) of our above-titled paper, currently under review.
 
 &nbsp;
 
 <div align="center">
-    <a href="https://arxiv.org/abs/">
-        <img src="https://img.shields.io/badge/arXiv--b31b1b.svg?style=flat-square">
+    <a href="https://arxiv.org/abs/2508.03520">
+        <img src="https://img.shields.io/badge/arXiv-2508.03520-b31b1b.svg?style=flat-square">
     </a>
-    <a href="https://arxiv.org/pdf/">
+    <a href="https://arxiv.org/pdf/2508.03520">
         <img src="https://img.shields.io/badge/PDF-blue.svg?style=flat-square">
     </a>
     <a href="https://github.com/hasan-rakibul/UPLME/stargazers">
