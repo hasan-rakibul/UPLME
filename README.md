@@ -59,11 +59,12 @@ This repository is licensed under the [Apache License 2.0](https://www.apache.or
 ## Citation
 ```bibtex
 @misc{hasan2025uplme,
-    title={UPLME: Uncertainty-Aware Probabilistic Language Modelling for Robust Empathy Regression}, 
-    author={Md Rakibul Hasan and MZ Hossain and A Krishna and S Rahman and T Gedeon},
+    title={{UPLME}: Uncertainty-Aware Probabilistic Language Modelling for Robust Empathy Regression}, 
+    author={Md Rakibul Hasan and Md Zakir Hossain and Aneesh Krishna and Shafin Rahman and Tom Gedeon},
     year={2025},
-    eprint={},
+    eprint={2508.03520},
     archivePrefix={arXiv},
     primaryClass={cs.CL},
-    url={https://arxiv.org/abs/}
+    url={https://arxiv.org/abs/2508.03520}
 }
+```
