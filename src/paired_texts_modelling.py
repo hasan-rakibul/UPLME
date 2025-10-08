@@ -295,8 +295,8 @@ class LitPairedTextModel(L.LightningModule):
             loss_dict[f"{prefix}_loss"] = total_loss.item()
 
         return total_loss, loss_dict
-
-    def _forward_pass(self, batch: dict) -> tuple[Tensor, Tensor, Tensor]:
+    
+    def forward(self, batch: dict) -> tuple[Tensor, Tensor, Tensor]:
         means, varss, hidden_states = [], [], []
 
         for _ in range(self.num_passes):
@@ -320,7 +320,7 @@ class LitPairedTextModel(L.LightningModule):
         return mean, var, hidden_state
     
     def training_step(self, batch, batch_idx):
-        mean, var, hidden_state = self._forward_pass(batch)
+        mean, var, hidden_state = self.forward(batch)
         
         loss, loss_dict = self._compute_loss(mean, var, batch["labels"], prefix="train",
                                              input_ids=batch['input_ids'],
@@ -345,7 +345,7 @@ class LitPairedTextModel(L.LightningModule):
         if self.num_passes > 1:
             self._enable_dropout_at_inference()
 
-        mean, var, hidden_state = self._forward_pass(batch)
+        mean, var, hidden_state = self.forward(batch)
 
         # Note: it's important to check dim and unsqeeze as we get 0-dim if the last batch has only one sample
         # Otherwise, we get an error when concatenating tensors later
@@ -444,7 +444,7 @@ class LitPairedTextModel(L.LightningModule):
         if self.num_passes > 1:
             self._enable_dropout_at_inference()
 
-        mean, var, _ = self._forward_pass(batch)
+        mean, var, _ = self.forward(batch)
 
         outputs = {
             "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
