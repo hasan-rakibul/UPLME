@@ -3,6 +3,7 @@ hydra:
     name: "${expt.num_passes}-passes-ucvme"
 
 is_ucvme: True
+plm_names: ["roberta-base", "roberta-base"]
 
 lambdas: [12.108875317622909, null, null, null, null] # only one weight in UCVME
 

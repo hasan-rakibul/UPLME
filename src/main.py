@@ -46,19 +46,21 @@ def main(cfg: DictConfig):
 
     is_two_models = cfg.expt.is_two_models
 
+    plm_names = cfg.expt.plm_names
+
     if approach == "cross-basic":
-        plm_names = ["roberta-base"]
-    elif approach == "siamese":
-        plm_names = ["facebook/bart-base", "facebook/bart-base"]
-    elif approach == "bi-prob":
-        plm_names = ["roberta-base", "roberta-base"]
+        assert len(plm_names) == 1, "For cross-basic, only one PLM name should be provided"
     elif approach == "cross-prob":
         if is_two_models:
-            plm_names = ["roberta-base", "roberta-base"]
-            if plm_names[0] != "roberta-base" or plm_names[1] != "roberta-base":
-                warnings.warn("Between-text loss is hardcoded for roberta-base")
+            assert len(plm_names) == 2, f"For {approach}, two PLM names should be provided"
+            if plm_names[0] != plm_names[1]:
+                warnings.warn("Trying to use different PLMs for two models - might fail for alignment loss.")
         else:
-            plm_names = ["roberta-base"]
+            assert len(plm_names) == 1, f"Expected 1 PLM name"
+    elif approach in ["siamese", "bi-prob"]:
+        assert len(plm_names) == 2, f"For {approach}, two PLM names should be provided"
+        if plm_names[0] != plm_names[1]:
+            warnings.warn("Trying to use different PLMs for two models - might fail for alignment loss.")
     else:
         raise ValueError(f"Unknown approach: {approach}")
 

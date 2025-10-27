@@ -1,14 +1,17 @@
 hydra:
   job:
-    name: "single-model_${expt.num_passes}-passes"
+    name: "debug-single-model_${expt.num_passes}-passes"
 
 # FIXED
 is_two_models: False
+# plm_names: ["roberta-base"]
+plm_names: ["chandar-lab/NeoBERT"]
 
 # Can change
 num_passes: 4
 
-lambdas: [1, 1, 1]
+# lambdas: [1, 1, 1]
+lambdas: [1, 9.110462266012783, 5.5635098435909764]
 # [nll, penalty, alignment]
 
 do_tune: False

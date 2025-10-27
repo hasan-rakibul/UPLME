@@ -14,6 +14,7 @@ expt:
   overwrite_parent_dir: null
   approach: cross-prob # options: cross-basic, cross-prob
   is_two_models: True
+  plm_names: ["roberta-base", "roberta-base"]
   lbl_split: 1.0 # percent of data to be used for labelled training
   sanitise_labels: False # whether to sanitise labels for newsemp dataset
 
