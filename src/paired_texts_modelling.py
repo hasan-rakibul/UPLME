@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class CrossEncoderProbModel(torch.nn.Module):
     def __init__(self, plm_name: str):
         super().__init__()
-        self.model = AutoModel.from_pretrained(plm_name)
+        self.model = AutoModel.from_pretrained(plm_name, trust_remote_code=True)
 
         if plm_name.startswith("roberta"):
             # only applicable for roberta
@@ -222,7 +222,7 @@ class LitPairedTextModel(L.LightningModule):
 
             sep_positions = (input_ids_sample == self.sep_token_id).nonzero(as_tuple=True)[0]
 
-            if "deberta" in self.plm_names[0]:
+            if "deberta" in self.plm_names[0] or "ModernBERT" in self.plm_names[0]:
                 # token pattern: [CLS] input1 [SEP] input2 [SEP]
                 assert len(sep_positions) == 2, f"Number of sep positions is not 2. {sep_positions}"
                 first_sep = sep_positions[0]
@@ -241,10 +241,7 @@ class LitPairedTextModel(L.LightningModule):
                 
                 input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
                 input2_repr = h_i[second_sep+1:third_sep] # excluding special tokens, (third_sep-second_sep-1, hidden_dim)
-
-            elif "neobert" in self.plm_names[0]:
-                import pdb; pdb.set_trace()
-
+                
             else:
                 raise NotImplementedError(f"Alignment loss is not implemented for {model_family} model family.")
             

@@ -98,8 +98,8 @@ def main(cfg: DictConfig):
         debug = True
         log_info(logger, "Debug mode")
         logger.setLevel(logging.DEBUG)
-        seeds = seeds[:2] # reduce the number of seeds for debugging
-        cfg.max_steps = 50
+        seeds = seeds[:1] # reduce the number of seeds for debugging
+        cfg.max_steps = 10
         cfg.val_check_interval = 5
         n_trials = 2
 

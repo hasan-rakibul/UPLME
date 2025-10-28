@@ -106,7 +106,7 @@ def process_seedwise_metrics(results: list, save_as: str) -> None:
             best_scores.loc["best", col] = results_df[col].min()
         else:
             best_scores.loc["best", col] = results_df[col].max()
-    best_row = best_scores.loc["best", :].round(3)
+    best_row = best_scores.loc["best", :].astype(float).round(3)
     
     # Assign a label to identify each row
     mean_row.name = "mean"

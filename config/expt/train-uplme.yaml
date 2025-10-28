@@ -1,11 +1,12 @@
 hydra:
   job:
-    name: "debug-single-model_${expt.num_passes}-passes"
+    name: "single-model_${expt.num_passes}-passes_deberta"
 
 # FIXED
 is_two_models: False
 # plm_names: ["roberta-base"]
-plm_names: ["chandar-lab/NeoBERT"]
+# plm_names: ["answerdotai/ModernBERT-base"]
+plm_names: ["microsoft/deberta-v3-base"]
 
 # Can change
 num_passes: 4
