@@ -4,6 +4,7 @@ hydra:
 
 approach: cross-basic
 is_two_models: False
+plm_names: ["roberta-base"]
 
 do_train: False
 do_test: True

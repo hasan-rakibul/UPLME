@@ -14,7 +14,6 @@ from pathlib import Path
 import pandas as pd
 from zipfile import ZipFile
 
-import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import WandbLogger
 
@@ -32,7 +31,7 @@ logger = logging.getLogger(__name__)
 class CrossEncoderProbModel(torch.nn.Module):
     def __init__(self, plm_name: str):
         super().__init__()
-        self.model = AutoModel.from_pretrained(plm_name)
+        self.model = AutoModel.from_pretrained(plm_name, trust_remote_code=True)
 
         if plm_name.startswith("roberta"):
             # only applicable for roberta
@@ -124,11 +123,13 @@ class LitPairedTextModel(L.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
+        self.plm_names = plm_names
+
         self.approach = approach
         if self.approach == "cross-basic":
-            self.model = CrossEncoderBasicModel(plm_name=plm_names[0])
+            self.model = CrossEncoderBasicModel(plm_name=self.plm_names[0])
         elif self.approach == "cross-prob":
-            self.model = CrossEncoderProbModel(plm_name=plm_names[0])
+            self.model = CrossEncoderProbModel(plm_name=self.plm_names[0])
         else:
             raise ValueError(f"Invalid approach: {self.approach}")
 
@@ -221,26 +222,29 @@ class LitPairedTextModel(L.LightningModule):
 
             sep_positions = (input_ids_sample == self.sep_token_id).nonzero(as_tuple=True)[0]
 
-            # if deberta
-            # token pattern: [CLS] input1 [SEP] input2 [SEP]
-            # assert len(sep_positions) == 2, f"Number of sep positions is not 2. {sep_positions}"
-            # first_sep = sep_positions[0]
-            # second_sep = sep_positions[1]
+            if "deberta" in self.plm_names[0] or "ModernBERT" in self.plm_names[0]:
+                # token pattern: [CLS] input1 [SEP] input2 [SEP]
+                assert len(sep_positions) == 2, f"Number of sep positions is not 2. {sep_positions}"
+                first_sep = sep_positions[0]
+                second_sep = sep_positions[1]
 
-            # input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
-            # input2_repr = h_i[first_sep+1:second_sep] # excluding special tokens, (second_sep-first_sep-1, hidden_dim)
-            # ^ important to not include till -1 because there could be padded stuffs
+                input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
+                input2_repr = h_i[first_sep+1:second_sep] # excluding special tokens, (second_sep-first_sep-1, hidden_dim)
+                # ^ important to not include till -1 because there could be padded stuffs
 
-            # if roberta
-            # token pattern: [CLS] input1 [SEP][SEP] input2 [SEP]
-            assert len(sep_positions) == 3, f"Number of sep positions is not 3. {sep_positions}"
-            first_sep = sep_positions[0]
-            second_sep = sep_positions[1]
-            third_sep = sep_positions[2]
+            elif "roberta" in self.plm_names[0]:
+                # token pattern: [CLS] input1 [SEP][SEP] input2 [SEP]
+                assert len(sep_positions) == 3, f"Number of sep positions is not 3. {sep_positions}"
+                first_sep = sep_positions[0]
+                second_sep = sep_positions[1]
+                third_sep = sep_positions[2]
+                
+                input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
+                input2_repr = h_i[second_sep+1:third_sep] # excluding special tokens, (third_sep-second_sep-1, hidden_dim)
+                
+            else:
+                raise NotImplementedError(f"Alignment loss is not implemented for {model_family} model family.")
             
-            input1_repr = h_i[1:first_sep] # excluding special tokens, (first_sep-1, hidden_dim)
-            input2_repr = h_i[second_sep+1:third_sep] # excluding special tokens, (third_sep-second_sep-1, hidden_dim)
-
             # Pool representation
             input1_repr = input1_repr.mean(dim=0) # (hidden_dim)
             input2_repr = input2_repr.mean(dim=0)
@@ -558,10 +562,6 @@ class PairedTextModelController(object):
 
         self.plm_names = plm_names
         self.lbl_split = lbl_split
-
-        for plm_name in self.plm_names:
-            if not plm_name.startswith("roberta"): # TODO: also add condition of lambda (not done now because lambda is incosistent betn two and single models)
-                raise ValueError(f"Only roberta is supported for alignment loss. Got {plm_name}")
 
         self.dm = PairedTextDataModule(
             noise_level=self.noise_level,

@@ -4,6 +4,7 @@ hydra:
 
 # FIXED
 is_two_models: False
+plm_names: ["roberta-base"]
 main_data: empstories
 
 # Can change

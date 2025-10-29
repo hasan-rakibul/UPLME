@@ -4,6 +4,7 @@ hydra:
 
 approach: cross-basic
 is_two_models: False
+plm_names: ["roberta-base"]
 
 lambdas: [null, null, 0]
 # [NA, NA, alignment]
