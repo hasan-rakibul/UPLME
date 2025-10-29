@@ -2,7 +2,7 @@
  
 #SBATCH --job-name=UPLME
 #SBATCH --output=outputs/log_slurm/%j_%x.log
-#SBATCH --time=4:00:00
+#SBATCH --time=08:00:00
 #SBATCH --nodes=1
 #SBATCH --partition=gpu-highmem
 #SBATCH --gres=gpu:1
