@@ -71,7 +71,7 @@ class CrossEncoderProbModel(torch.nn.Module):
         mean = self.out_proj_m(sentence_representation)
         var = self.out_proj_v(sentence_representation)
         var = torch.clamp(var, min=1e-8, max=1000) # following Seitzer-NeurIPS2022
-        
+    
         return mean.squeeze(), var.squeeze(), sentence_representation, output.last_hidden_state
 
 class CrossEncoderBasicModel(torch.nn.Module):
@@ -119,7 +119,8 @@ class LitPairedTextModel(L.LightningModule):
         sep_token_id: int, # required for alignment loss
         lambdas: list[float] = [], # initlisaed to compatible with old saved checkpoints
         num_passes: int = 4,
-        wd: float = 0.1
+        wd: float = 0.1,
+        seed: int = 0
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -144,6 +145,7 @@ class LitPairedTextModel(L.LightningModule):
         self.lambdas = lambdas
         self.sep_token_id = sep_token_id
         self.num_passes = num_passes
+        self.seed = seed
         
         self.penalty_type = "exp-decay"
 
@@ -343,14 +345,16 @@ class LitPairedTextModel(L.LightningModule):
         return loss
     
     def _enable_dropout_at_inference(self):
+        L.seed_everything(self.seed)
         for m in self.model.modules():
             if isinstance(m, torch.nn.Dropout):
                 m.train()
 
-    def validation_step(self, batch, batch_idx):
+    def on_validation_start(self):
         if self.num_passes > 1:
             self._enable_dropout_at_inference()
 
+    def validation_step(self, batch, batch_idx):
         mean, var, hidden_state = self.forward(batch)
 
         # Note: it's important to check dim and unsqeeze as we get 0-dim if the last batch has only one sample
@@ -446,10 +450,11 @@ class LitPairedTextModel(L.LightningModule):
         if "labels" in output_dict:
             plot_uncertainy(output_dict, f"{self.log_dir}/uncertainty.pdf")
 
-    def test_step(self, batch, batch_idx):
+    def on_test_start(self):
         if self.num_passes > 1:
             self._enable_dropout_at_inference()
 
+    def test_step(self, batch, batch_idx):
         mean, var, _ = self.forward(batch)
 
         outputs = {
@@ -686,7 +691,8 @@ class PairedTextModelController(object):
                     approach=self.approach,
                     sep_token_id=self.dm.tokeniser.sep_token_id,
                     num_passes=self.num_passes,
-                    wd=self.wd
+                    wd=self.wd,
+                    seed=seed
                 )
             
             trainer.fit(
