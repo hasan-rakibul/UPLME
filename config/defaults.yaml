@@ -44,10 +44,11 @@ expt:
   # actual train and val data depends on main_data
   train_data: [2024, 2022]
   val_data: 2024 # test would be same as val_data as in in-sample setting
+  lr: 3.0e-5
+  wd: 0.1
 
 max_steps: 6000
 val_check_interval: 200 # num steps (if int) or portion of epoch (if float)
-lr: 3.0e-5
 train_bsz: 16
 eval_bsz: 16
 
