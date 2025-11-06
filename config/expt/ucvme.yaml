@@ -6,6 +6,7 @@ is_ucvme: True
 plm_names: ["roberta-base", "roberta-base"]
 
 lambdas: [12.108875317622909, null, null, null, null] # only one weight in UCVME
+# lambdas: [12.11, null, null, null, null] # only one weight in UCVME
 
 lbl_split: 1
 num_passes: 4

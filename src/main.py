@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 import torch
 # MI250X GPU has Tensor core, so recommeded to use high or medium precision
 # as opposed to highest precision (default) for faster computation
-torch.set_float32_matmul_precision('high')
+# torch.set_float32_matmul_precision('high')
+
+torch.set_float32_matmul_precision('highest')
+torch.use_deterministic_algorithms(True)
 
 @hydra.main(config_path="../config", config_name="defaults", version_base="1.3")
 def main(cfg: DictConfig):
@@ -32,7 +35,8 @@ def main(cfg: DictConfig):
     
     # things coming from the config
     seeds = cfg.seeds
-    lr = cfg.lr
+    lr = cfg.expt.lr
+    wd = cfg.expt.wd
     train_bsz = cfg.train_bsz
     eval_bsz = cfg.eval_bsz
     delta = cfg.expt.delta
@@ -108,6 +112,7 @@ def main(cfg: DictConfig):
         val_files=val_files,
         test_files=test_files,
         lr=lr,
+        wd=wd,
         train_bsz=train_bsz,
         eval_bsz=eval_bsz,
         max_steps=cfg.max_steps,

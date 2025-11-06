@@ -8,7 +8,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --account=pawsey1001-gpu
 
-module load pytorch/2.7.1-rocm6.3.3
+module load pytorch/2.2.0-rocm5.7.3
 
 # EXPT_FILE_NAME="train-plm-mlp"
 # EXPT_FILE_NAME="test-plm-mlp"

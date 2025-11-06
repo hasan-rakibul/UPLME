@@ -11,6 +11,7 @@ main_data: empstories
 num_passes: 4
 
 lambdas: [1, 44.267427035816425, 21.34894435683186]
+# lambdas: [1, 44.27, 21.35]
 # [nll, penalty, alignment]
 
 error_decay_factor: 1.0 # didn't tune, but kept fixed

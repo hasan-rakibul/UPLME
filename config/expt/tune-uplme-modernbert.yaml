@@ -1,10 +1,12 @@
 hydra:
   job:
-    name: "single-model_${expt.num_passes}-passes_alpha-${expt.error_decay_factor}"
+    name: "single-model_${expt.num_passes}-passes_alpha-${expt.error_decay_factor}_modernbert"
 
 # FIXED
 is_two_models: False
-plm_names: ["roberta-base"]
+plm_names: ["answerdotai/ModernBERT-base"]
+lr: 8.0e-5
+wd: 1.0e-5
 
 # Can change
 num_passes: 4
@@ -14,10 +16,10 @@ lambdas: [null, null, null] # being tuned / set in optuna objective
 
 error_decay_factor: 1.5
 
-main_data: empstories
+main_data: newsemp
 
 do_tune: True
-n_trials: 10
+n_trials: 20
 
 do_train: False # training immediately after tuning with updated parameters is not properly configured
 do_test: False

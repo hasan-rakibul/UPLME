@@ -1,21 +1,25 @@
 hydra:
   job:
-    name: "single-model_${expt.num_passes}-passes_deberta"
+    name: "single-model_${expt.num_passes}-passes_ablation-lambdas"
 
 # FIXED
 is_two_models: False
-# plm_names: ["roberta-base"]
-# plm_names: ["answerdotai/ModernBERT-base"]
-plm_names: ["microsoft/deberta-v3-base"]
+plm_names: ["roberta-base"]
+main_data: empstories
 
 # Can change
-num_passes: 4
+num_passes: 1
 
-# lambdas: [1, 1, 1]
-lambdas: [1, 9.110462266012783, 5.5635098435909764]
+lambdas: [1, 0, 1]
+# lambdas: [1, 44.27, 21.35]
+# lambdas: [1, 8.447698992585831, 4.088503464752342]
+# lambdas: [1, 9.110462266012783, 5.5635098435909764]
 # [nll, penalty, alignment]
+
+error_decay_factor: 1.5
 
 do_tune: False
 do_augment: True
 
+# for resuming experiments
 overwrite_parent_dir: null
