@@ -20,7 +20,7 @@ module load pytorch/2.7.1-rocm6.3.3
 # EXPT_FILE_NAME="tune-uplme-modernbert"
 # EXPT_FILE_NAME="tune-uplme-deberta"
 
-EXPT_FILE_NAME="uplme-best-newsemp"
+# EXPT_FILE_NAME="uplme-best-newsemp"
 # EXPT_FILE_NAME="uplme-best-empstories"
 
 # EXPT_FILE_NAME="test-newsemp22"
