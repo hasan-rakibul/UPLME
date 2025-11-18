@@ -84,7 +84,6 @@ def plot_tsne_umap(
     fig_width = 10 if side_by_side else 5 * num_plot_pairs
     fig_height = 5 if side_by_side else 10
     fig = plt.figure(figsize=(fig_width, fig_height))
-    # fig = plt.figure(figsize=(fig_width, fig_height), layout="constrained")
     scatter_ref = None
 
     cmap = plt.colormaps["viridis_r"]
@@ -159,20 +158,19 @@ def plot_tsne_umap(
     cbar = fig.colorbar(
         scatter_ref,
         ax=fig.axes,
-        shrink=0.75 if side_by_side else 0.65,
-        aspect=50,
-        pad=0.07,
-        # orientation="horizontal",
+        shrink=0.65 if side_by_side else 0.65,
+        aspect=30,
+        pad=0.08,
         location="right"
     )
     cbar.set_label("Empathy score")
-    # cbar.ax.xaxis.set_label_position("top")
-    # cbar.ax.xaxis.set_ticks_position("bottom")
+    cbar.ax.xaxis.set_label_position("top")
+    cbar.ax.xaxis.set_ticks_position("bottom")
 
     output_path = Path(save_dir) / "tsne_umap.pdf"
     fig.savefig(output_path, bbox_inches='tight')
     plt.close(fig)
-    print(f"Save t-SNE/UMAP as {output_path}")
+    print(f"Saved t-SNE/UMAP as {output_path}")
 
 def _collect_embeddings_from_model(
     ckpt_path: str,
