@@ -46,7 +46,7 @@ def plot_noise_removal_demo(outputs_path: Path, save_path: Path) -> None:
     # ax.set_ylabel("Predicted")
     fig.colorbar(sc_unc, ax=ax, label="Uncertainty")
 
-    save_as = f"{save_path}/uplme-noise-removal-demo.svg" # svg as I will use it in draw.io
+    save_as = f"{save_path}/uplme-noise-removal-demo.pdf"
     plt.tight_layout()
     plt.savefig(save_as)
     plt.close()
