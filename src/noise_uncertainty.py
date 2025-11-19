@@ -1,5 +1,6 @@
 from pathlib import Path
 import numpy as np
+import scipy
 
 import matplotlib.pyplot as plt
 import scienceplots
@@ -20,42 +21,94 @@ def _load_outputs(outputs_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarra
     noise = data["noise"]
     return labels, preds, uncs, noise
 
-def plot_penalty_loss(outputs_path: Path, save_path: Path) -> None:
+def plot_noise_removal_demo(outputs_path: Path, save_path: Path) -> None:
     save_path.mkdir(parents=True, exist_ok=True)
     
     labels, preds, uncs, noise = _load_outputs(outputs_path)
 
     noisy_mask = noise > 0
+    clean_mask = noise == 0
+
+    fig, axes = plt.subplots(1, 2, figsize=(5, 2.5), sharey=True, gridspec_kw={"wspace": 0})
+    # noise is binary now
+    ax = axes[0]
+    _ = ax.scatter(labels[clean_mask], preds[clean_mask], color="tab:blue", alpha=0.4, label="Clean")
+    ax.scatter(labels[noisy_mask], preds[noisy_mask], color="tab:red", alpha=0.4, label="Noisy")
+    ax.plot([1, 7], [1, 7], "k--")
+    ax.set_xlabel("True")
+    ax.set_ylabel("Predicted")
+    ax.legend()
+
+    ax = axes[1]
+    sc_unc = ax.scatter(labels, preds, c=uncs, alpha=0.4, cmap="viridis")
+    ax.plot([1, 7], [1, 7], "k--")
+    ax.set_xlabel("True")
+    # ax.set_ylabel("Predicted")
+    fig.colorbar(sc_unc, ax=ax, label="Uncertainty")
+
+    save_as = f"{save_path}/uplme-noise-removal-demo.svg" # svg as I will use it in draw.io
+    plt.tight_layout()
+    plt.savefig(save_as)
+    plt.close()
+    print(f"Saved figure as {save_as}") 
+
+def plot_noise_analysis(outputs_path: Path, save_path: Path) -> None:
+    save_path.mkdir(parents=True, exist_ok=True)
+
+    labels, preds, uncs, noise = _load_outputs(outputs_path)
+    abs_err = np.abs(preds - labels)
+    
+    noisy_mask = noise > 0
+    clean_mask = noise == 0
     uncs_noisy = uncs[noisy_mask]
-    uncs_clean = uncs[~noisy_mask]
+    uncs_clean = uncs[clean_mask]
     print(f"Mean uncertainty for noisy samples: {np.mean(uncs_noisy)}")
     print(f"Mean uncertainty for clean samples: {np.mean(uncs_clean)}")
+    
+    _, axes = plt.subplots(
+        1, 3, figsize=(8, 3),
+        gridspec_kw={"width_ratios" :[1.4, 0.7, 1.6]}
+    )
+    ax = axes[0]
+    bins = np.linspace(np.min(uncs), np.max(uncs), 50)
+    _ = ax.hist([uncs_noisy, uncs_clean], bins=bins,
+                        stacked=True, alpha=0.6, color=["tab:red", "tab:blue"],
+                        label=["Noisy", "Clean"])
+    for group in [uncs_noisy, uncs_clean]:
+        kde = scipy.stats.gaussian_kde(group)
+        ax.plot(bins, kde(bins) * len(group) * (bins[1]-bins[0]), color="black", linewidth=1, linestyle="--")
+    ax.legend()
+    ax.set_xlabel("Uncertainty")
+    ax.set_ylabel("Frequency")
 
-    _, ax = plt.subplots(2, 2, figsize=(10, 10))
-    ax[0, 0].scatter(labels, preds, c=uncs, cmap="coolwarm")
-    ax[0, 0].plot([1, 7], [1, 7], "k--")
-    ax[0, 0].set_xlabel("True")
-    ax[0, 0].set_ylabel("Predicted")
-    ax[0, 1].scatter(labels, preds, c=noise, cmap="coolwarm")
-    ax[0, 1].plot([1, 7], [1, 7], "k--")
-    ax[0, 1].set_xlabel("True")
-    ax[0, 1].set_ylabel("Predicted")
+    ax = axes[1]
+    ax.boxplot([uncs_noisy, uncs_clean], tick_labels=["Noisy", "Clean"])
+    ax.set_ylabel("Uncertainty")
+    ax.set_xlabel("Sample type")
 
-    ax[1, 0].hist(uncs_noisy, bins=50, alpha=0.5, label="Noisy", color="red")
-    ax[1, 0].hist(uncs_clean, bins=50, alpha=0.5, label="Clean", color="blue")
-    ax[1, 0].legend()
-    ax[1, 0].set_xlabel("Uncertainty")
-    ax[1, 0].set_ylabel("Frequency")
+    ax = axes[2]
+    ax.scatter(uncs[clean_mask], abs_err[clean_mask],
+               color="tab:blue", alpha=0.6, label="Clean")
+    ax.scatter(uncs[noisy_mask], abs_err[noisy_mask],
+               color="tab:red", alpha=0.6, label="Noisy")
+    ax.set_xlabel("Predictive Uncertainty")
+    ax.set_ylabel("Absolute Prediction Error")
 
-    ax[1, 1].boxplot([uncs_noisy, uncs_clean], tick_labels=["Noisy", "Clean"])
-    ax[1, 1].set_ylabel("Uncertainty")
-    ax[1, 1].set_xlabel("Sample type")
+    rho, pval = scipy.stats.spearmanr(uncs, abs_err)
+    ax.text(
+         0.95, 0.05, f"Spearman's $\\rho ={rho:.2f}$\np-value $={pval:.1e}$",
+         transform=ax.transAxes, ha="right",
+         bbox = dict(boxstyle="round,pad=0.3", fc="white", ec="0.8")
+    )
+    ax.legend()
 
+    save_as = f"{save_path}/uplme-noise-removal-analysis.pdf"
     plt.tight_layout()
-    plt.savefig(f"{save_path}/uplme-noise-removal-demo.pdf")
+    plt.savefig(save_as)
     plt.close()
-    print(f"Saved figure to {save_path}")
+    print(f"Saved figure as {save_as}")
 
 if __name__ == "__main__":
     output_file = "outputs/20250202_233546_single-prob_(2024,2022)-error-weighted-penalty-tuned/lr_3e-05_bs_16/seed_0/output_unc.npy"
-    plot_penalty_loss(output_file, save_path=Path("outputs/noise-removal-demo"))
+    plot_noise_removal_demo(output_file, save_path=Path("outputs/noise-removal-demo"))
+    plot_noise_analysis(output_file, save_path=Path("outputs/noise-removal-demo"))
