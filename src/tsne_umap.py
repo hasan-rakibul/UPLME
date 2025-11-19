@@ -80,9 +80,9 @@ def plot_tsne_umap(
     if num_plot_pairs == 0:
         raise ValueError("No embeddings available for plotting.")
 
-    side_by_side = num_plot_pairs == 1
-    fig_width = 10 if side_by_side else 5 * num_plot_pairs
-    fig_height = 5 if side_by_side else 10
+    only_one_case = num_plot_pairs == 1
+    fig_width = 6 if only_one_case else 5 * num_plot_pairs
+    fig_height = 8
     fig = plt.figure(figsize=(fig_width, fig_height))
     scatter_ref = None
 
@@ -98,9 +98,9 @@ def plot_tsne_umap(
         tsne_proj = "3d" if tsne_embeddings.shape[1] >= 3 else None
         umap_proj = "3d" if umap_embeddings.shape[1] >= 3 else None
 
-        if side_by_side:
-            tsne_ax = fig.add_subplot(1, 2, 1, projection=tsne_proj)
-            umap_ax = fig.add_subplot(1, 2, 2, projection=umap_proj)
+        if only_one_case:
+            tsne_ax = fig.add_subplot(2, 1, 1, projection=tsne_proj)
+            umap_ax = fig.add_subplot(2, 1, 2, projection=umap_proj)
         else:
             tsne_ax = fig.add_subplot(2, num_plot_pairs, idx + 1, projection=tsne_proj)
             umap_ax = fig.add_subplot(2, num_plot_pairs, num_plot_pairs + idx + 1, projection=umap_proj)
@@ -126,6 +126,8 @@ def plot_tsne_umap(
         scatter_ref = scatter_ref or tsne_scatter
         tsne_ax.set_xlabel("t-SNE 1")
         tsne_ax.set_ylabel("t-SNE 2")
+        
+        # umap_ax.set_box_aspect(None, zoom=0.95)
 
         if umap_proj:
             umap_ax.scatter(
@@ -148,19 +150,23 @@ def plot_tsne_umap(
         umap_ax.set_xlabel("UMAP 1")
         umap_ax.set_ylabel("UMAP 2")
 
-        # NOTE: skeptical about that the score signify in this case, also because we have continuous scale
-        # score = _embedding_silhouette_score(embeddings, labels)
-        # tsne_ax.set_title(identifiers[idx] + " (t-SNE)\n" + r"\textbf{Silhouette score: $\mathbf{" + f"{score}" + r"}$}")
-        # umap_ax.set_title(identifiers[idx] + " (UMAP)\n" + r"\textbf{Silhouette score: $\mathbf{" + f"{score}" + r"}$}")
+        # umap_ax.set_box_aspect(None, zoom=0.95)
 
-    fig.subplots_adjust(wspace=0.2)
+    if only_one_case:
+        # fig.subplots_adjust(wspace=0)
+        fig.subplots_adjust(
+            top=0.95,
+            bottom=0.05,
+            wspace=0.01,
+            hspace=0.0
+        )
 
     cbar = fig.colorbar(
         scatter_ref,
         ax=fig.axes,
-        shrink=0.65 if side_by_side else 0.65,
+        shrink=0.65,
         aspect=30,
-        pad=0.08,
+        pad=0.12,
         location="right"
     )
     cbar.set_label("Empathy score")

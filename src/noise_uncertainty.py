@@ -67,12 +67,12 @@ def plot_noise_analysis(outputs_path: Path, save_path: Path) -> None:
     
     _, axes = plt.subplots(
         1, 3, figsize=(8, 3),
-        gridspec_kw={"width_ratios" :[1.4, 0.7, 1.6]}
+        gridspec_kw={"width_ratios" :[1.5, 0.5, 1.6]}
     )
     ax = axes[0]
     bins = np.linspace(np.min(uncs), np.max(uncs), 50)
     _ = ax.hist([uncs_noisy, uncs_clean], bins=bins,
-                        stacked=True, alpha=0.6, color=["tab:red", "tab:blue"],
+                        stacked=False, color=["tab:red", "tab:blue"],
                         label=["Noisy", "Clean"])
     for group in [uncs_noisy, uncs_clean]:
         kde = scipy.stats.gaussian_kde(group)
@@ -84,7 +84,7 @@ def plot_noise_analysis(outputs_path: Path, save_path: Path) -> None:
     ax = axes[1]
     ax.boxplot([uncs_noisy, uncs_clean], tick_labels=["Noisy", "Clean"])
     ax.set_ylabel("Uncertainty")
-    ax.set_xlabel("Sample type")
+    ax.set_xlabel("Sample Type")
 
     ax = axes[2]
     ax.scatter(uncs[clean_mask], abs_err[clean_mask],
@@ -95,12 +95,17 @@ def plot_noise_analysis(outputs_path: Path, save_path: Path) -> None:
     ax.set_ylabel("Absolute Prediction Error")
 
     rho, pval = scipy.stats.spearmanr(uncs, abs_err)
+    print(f"Spearman's correlation coefficient: {rho}, p-value: {pval}")
     ax.text(
          0.95, 0.05, f"Spearman's $\\rho ={rho:.2f}$\np-value $={pval:.1e}$",
          transform=ax.transAxes, ha="right",
          bbox = dict(boxstyle="round,pad=0.3", fc="white", ec="0.8")
     )
-    ax.legend()
+
+    handles, labels = ax.get_legend_handles_labels()
+    order = [1, 0]  # put "Noisy" first, then "Clean"
+    ax.legend([handles[i] for i in order],
+            [labels[i] for i in order])
 
     save_as = f"{save_path}/uplme-noise-removal-analysis.pdf"
     plt.tight_layout()
