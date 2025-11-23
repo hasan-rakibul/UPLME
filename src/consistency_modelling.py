@@ -27,6 +27,7 @@ class LitTwoModels(LitPairedTextModel):
             raise ValueError(f"Invalid or not-implemented approach: {self.approach}")
 
     def _enable_dropout_at_inference(self):
+        L.seed_everything(self.seed)
         for m in self.model.modules():
             if isinstance(m, torch.nn.Dropout):
                 m.train()
@@ -34,12 +35,13 @@ class LitTwoModels(LitPairedTextModel):
         for m in self.model_2.modules():
             if isinstance(m, torch.nn.Dropout):
                 m.train()
+    
+    def on_test_start(self):
+        if self.num_passes > 1:
+            self._enable_dropout_at_inference()
 
     def test_step(self, batch, batch_idx):
         mean_1s, mean_2s, var_1s, var_2s = [], [], [], []
-
-        if self.num_passes > 1:
-            self._enable_dropout_at_inference()
 
         for _ in range(self.num_passes):
             
@@ -101,6 +103,48 @@ class LitUCVME(LitTwoModels):
         loss_dict[f"{prefix}_loss"] = loss.item()
 
         return loss, loss_dict
+    
+    def forward(self, batch: dict) -> tuple[Tensor]:
+        # implemented in Nov 2025 for TSNE
+        # TODO: so, we can now integrate this with training/validation/test steps
+        # ^ to do that, more customisation (such as hidden state calc) may be required
+        mean_1s, mean_2s, var_1s, var_2s, srep_1s, srep_2s, hr_1s, hr_2s = [], [], [], [], [], [], [], []
+        
+        with torch.no_grad():
+            for _ in range(self.num_passes):
+                mean_1, var_1, srep_1, hr_1 = self.model(
+                    input_ids=batch["input_ids_1"],
+                    attention_mask=batch["attention_mask_1"]
+                )
+                mean_2, var_2, srep_2, hr_2 = self.model_2(
+                    input_ids=batch["input_ids_2"],
+                    attention_mask=batch["attention_mask_2"]
+                )
+
+                mean_1s.append(mean_1)
+                var_1s.append(var_1)
+                mean_2s.append(mean_2)
+                var_2s.append(var_2)
+                srep_1s.append(srep_1)
+                srep_2s.append(srep_2)
+                hr_1s.append(hr_1)
+                hr_2s.append(hr_2)
+                
+            mean_1 = torch.stack(mean_1s, dim=0).mean(dim=0) # (num_passes, bsz) -> (bsz)
+            mean_2 = torch.stack(mean_2s, dim=0).mean(dim=0)
+            var_1 = torch.stack(var_1s, dim=0).mean(dim=0)
+            var_2 = torch.stack(var_2s, dim=0).mean(dim=0)
+            srep_1 = torch.stack(srep_1s, dim=0).mean(dim=0)
+            srep_2 = torch.stack(srep_2s, dim=0).mean(dim=0)
+            hr_1 = torch.stack(hr_1s, dim=0).mean(dim=0)
+            hr_2 = torch.stack(hr_2s, dim=0).mean(dim=0)
+
+        mean = 0.5 * (mean_1 + mean_2)
+        var = 0.5 * (var_1 + var_2)
+        srep = 0.5 * (srep_1 + srep_2)
+        hr = 0.5 * (hr_1 + hr_2)
+
+        return mean, var, hr, srep
 
     def training_step(self, batch: dict, batch_idx):
         mean_1s, mean_2s, var_1s, var_2s = [], [], [], []
@@ -162,11 +206,12 @@ class LitUCVME(LitTwoModels):
         
         return loss
     
-    def validation_step(self, batch: dict, batch_idx):
-        mean_1s, mean_2s, var_1s, var_2s = [], [], [], []
-
+    def on_validation_start(self):
         if self.num_passes > 1:
             self._enable_dropout_at_inference()
+
+    def validation_step(self, batch: dict, batch_idx):
+        mean_1s, mean_2s, var_1s, var_2s = [], [], [], []
         
         for _ in range(self.num_passes):
             

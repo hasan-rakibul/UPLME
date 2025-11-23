@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "single-model_${expt.num_passes}-passes_modernbert"
+    name: "single-model_${expt.num_passes}-passes_deberta"
 
 # FIXED
 is_two_models: False
@@ -11,10 +11,15 @@ wd: 0.01
 # Can change
 num_passes: 4
 
-# tuned
-lambdas: [1, 23.5, 35.5]
+# tuned - newsemp
+# main_data: newsemp
+# lambdas: [1, 37.6, 19.5]
 
-error_decay_factor: 1.5
+# tuned - empstories
+main_data: empstories
+lambdas: [1, 12.9, 13.1]
+
+error_decay_factor: 1.0
 
 do_tune: False
 do_augment: True

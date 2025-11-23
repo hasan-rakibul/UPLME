@@ -2,7 +2,7 @@
  
 #SBATCH --job-name=UPLME
 #SBATCH --output=outputs/log_slurm/%j_%x.log
-#SBATCH --time=20:00:00
+#SBATCH --time=4:00:00
 #SBATCH --nodes=1
 #SBATCH --partition=gpu-highmem
 #SBATCH --gres=gpu:1
@@ -13,8 +13,9 @@ module load pytorch/2.7.1-rocm6.3.3
 # EXPT_FILE_NAME="train-plm-mlp"
 # EXPT_FILE_NAME="test-plm-mlp"
 
-# EXPT_FILE_NAME="train-uplme"
+EXPT_FILE_NAME="train-uplme"
 # EXPT_FILE_NAME="train-uplme-modernbert"
+# EXPT_FILE_NAME="train-uplme-deberta"
 # EXPT_FILE_NAME="test-uplme"
 # EXPT_FILE_NAME="tune-uplme"
 # EXPT_FILE_NAME="tune-uplme-modernbert"

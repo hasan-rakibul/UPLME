@@ -9,5 +9,7 @@ plm_names: ["roberta-base"]
 lambdas: [null, null, 0]
 # [NA, NA, alignment]
 
+num_passes: 1
+
 #### Resume training
 overwrite_parent_dir: null

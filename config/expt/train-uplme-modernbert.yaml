@@ -5,16 +5,21 @@ hydra:
 # FIXED
 is_two_models: False
 plm_names: ["answerdotai/ModernBERT-base"]
-lr: 8.0e-5
-wd: 1.0e-5
 
 # Can change
 num_passes: 4
 
-# tuned
-lambdas: [1, 23.5, 35.5]
+error_decay_factor: 1.0
 
-error_decay_factor: 1.5
+# tuned - newsemp, tuned for the default lr and wd of roberta
+# main_data: newsemp
+lambdas: [1, 29.6, 39.5]
+
+# tuned - empstories, tuned for a diff lr and wd based on modernbert paper
+main_data: empstories
+# lr: 8.0e-5
+# wd: 1.0e-5
+# lambdas: [1, 47.8, 47.1]
 
 do_tune: False
 do_augment: True

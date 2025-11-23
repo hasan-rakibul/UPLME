@@ -1,20 +1,20 @@
 hydra:
   job:
-    name: "single-model_${expt.num_passes}-passes_ablation-lambdas"
+    name: "single-model_${expt.num_passes}-passes"
 
 # FIXED
 is_two_models: False
 plm_names: ["roberta-base"]
-main_data: empstories
 
 # Can change
-num_passes: 1
+num_passes: 4
 
-lambdas: [1, 0, 1]
-# lambdas: [1, 44.27, 21.35]
-# lambdas: [1, 8.447698992585831, 4.088503464752342]
-# lambdas: [1, 9.110462266012783, 5.5635098435909764]
 # [nll, penalty, alignment]
+# main_data: newsemp
+# lambdas: [1, 17.3, 0.3]
+
+main_data: empstories
+lambdas: [1, 32.8, 9.6]
 
 error_decay_factor: 1.5
 

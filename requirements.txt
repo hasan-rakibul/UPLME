@@ -15,6 +15,7 @@ wandb
 # significance testing
 seaborn
 statannotations
+umap-learn
 
 # Optuna hyperparameter optimisation
 optuna

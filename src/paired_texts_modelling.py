@@ -103,7 +103,8 @@ class CrossEncoderBasicModel(torch.nn.Module):
         y_hat = self.out_proj(sentence_representation) 
 
         return (
-            y_hat.squeeze(), 
+            y_hat.squeeze(),
+            sentence_representation,
             output.last_hidden_state
         )
     
@@ -304,31 +305,33 @@ class LitPairedTextModel(L.LightningModule):
 
         return total_loss, loss_dict
     
-    def forward(self, batch: dict) -> tuple[Tensor, Tensor, Tensor]:
-        means, varss, hidden_states = [], [], []
+    def forward(self, batch: dict) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        means, varss, hidden_states, sentence_reps = [], [], [], []
 
         for _ in range(self.num_passes):
             if self.approach == "cross-prob":
-                mean, var, _, hidden_state = self.model(
+                mean, var, sentence_representation, hidden_state = self.model(
                     input_ids=batch['input_ids'],
                     attention_mask=batch['attention_mask']
                 )
             elif self.approach == "cross-basic":
-                mean, hidden_state = self.model(batch)
+                mean, sentence_representation, hidden_state = self.model(batch)
                 var = torch.zeros_like(mean)
             
             means.append(mean)
             varss.append(var)
             hidden_states.append(hidden_state)
+            sentence_reps.append(sentence_representation)
         
         mean = torch.stack(means, dim=0).mean(dim=0)
         var = torch.stack(varss, dim=0).mean(dim=0)
         hidden_state = torch.stack(hidden_states, dim=0).mean(dim=0)
+        sentence_representation = torch.stack(sentence_reps, dim=0).mean(dim=0)
 
-        return mean, var, hidden_state
+        return mean, var, hidden_state, sentence_representation
     
     def training_step(self, batch, batch_idx):
-        mean, var, hidden_state = self.forward(batch)
+        mean, var, hidden_state, _ = self.forward(batch)
         
         loss, loss_dict = self._compute_loss(mean, var, batch["labels"], prefix="train",
                                              input_ids=batch['input_ids'],
@@ -355,7 +358,7 @@ class LitPairedTextModel(L.LightningModule):
             self._enable_dropout_at_inference()
 
     def validation_step(self, batch, batch_idx):
-        mean, var, hidden_state = self.forward(batch)
+        mean, var, hidden_state, _ = self.forward(batch)
 
         # Note: it's important to check dim and unsqeeze as we get 0-dim if the last batch has only one sample
         # Otherwise, we get an error when concatenating tensors later
@@ -455,7 +458,7 @@ class LitPairedTextModel(L.LightningModule):
             self._enable_dropout_at_inference()
 
     def test_step(self, batch, batch_idx):
-        mean, var, _ = self.forward(batch)
+        mean, var, _, _ = self.forward(batch)
 
         outputs = {
             "mean": mean.unsqueeze(0) if mean.dim() == 0 else mean,
@@ -777,6 +780,7 @@ class PairedTextModelController(object):
         self.lambdas = [1.0, lambda_1, lambda_2]
         
         # self.error_decay_factor = trial.suggest_float("error_decay_factor", 0.0, 3.0, step=0.5)
+        self.error_decay_factor = trial.suggest_categorical("error_decay_factor", [1.0, 1.5])
 
         pruning_callback = PyTorchLightningPruningCallback(trial, monitor="val_ccc")
         _, metrics = self._seed_wise_train_validate(

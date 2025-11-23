@@ -1,6 +1,6 @@
 hydra:
   job:
-    name: "single-model_${expt.num_passes}-passes_alpha-${expt.error_decay_factor}_deberta"
+    name: "single-model_${expt.num_passes}-passes_deberta"
 
 # FIXED
 is_two_models: False
@@ -14,14 +14,14 @@ num_passes: 4
 lambdas: [null, null, null] # being tuned / set in optuna objective
 # [nll, penalty, alignment]
 
-error_decay_factor: 1.5
+error_decay_factor: null
 
-main_data: newsemp
+main_data: empstories
 
 do_tune: True
-n_trials: 8
+n_trials: 20
 
 do_train: False # training immediately after tuning with updated parameters is not properly configured
 do_test: False
 
-overwrite_parent_dir: outputs/2025-11-04/21-32-50_newsemp_cross-prob_lambdas-[None, None, None]_tune-True_tune_single-model_4-passes_alpha1.5_deberta 
+overwrite_parent_dir: null 

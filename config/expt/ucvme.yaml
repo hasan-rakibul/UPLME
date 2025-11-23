@@ -6,15 +6,17 @@ is_ucvme: True
 plm_names: ["roberta-base", "roberta-base"]
 
 lambdas: [12.108875317622909, null, null, null, null] # only one weight in UCVME
-# lambdas: [12.11, null, null, null, null] # only one weight in UCVME
 
 lbl_split: 1
 num_passes: 4
 
+# main_data: newsemp 
 main_data: empstories 
 
 do_tune: False
-n_trials: 10
-do_train: True
+n_trials: 20
 
-overwrite_parent_dir: null 
+# if testing only
+# do_train: False
+# do_test: True
+# overwrite_parent_dir: outputs/2025-07-30/16-35-59_newsemp_cross-prob_lambdas-[1, None, None, None, None]_tune-False_4-passes-ucvme 
